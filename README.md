@@ -5,7 +5,7 @@
 > DeepSeek Harness（命令 `dsh`）的插件是 Cordis 插件包，通过 npm 分发，用 `dsh plugin --profile <profile> add <包名>` 装进某个 profile。官方明确处于 developer preview，会有破坏性变更，装之前留意插件的 `engines.dsh` / 兼容性声明。
 
 [![plugins](https://img.shields.io/badge/自研插件-plugins%2F-3b82f6?style=flat-square)](#自研插件)
-[![verified](https://img.shields.io/badge/第三方清单-逐个核对 npm-10b981?style=flat-square)](#常用插件清单)
+[![verified](https://img.shields.io/badge/常用插件-本机实测-10b981?style=flat-square)](#常用插件清单)
 [![license](https://img.shields.io/badge/license-MIT-64748b?style=flat-square)](LICENSE)
 
 ---
@@ -45,87 +45,19 @@ plugins/<name>/
 
 ## 常用插件清单
 
-下面每个包都在 npm 上拉过元数据，确认 `dsh.bundle.patch` 存在、`repository` 指向可访问仓库。按用途分组，装之前仍建议看一眼对应仓库的 README 和兼容性说明。
+只列我**本机真的装着、天天在用**的插件。本仓库不是插件大全——想逛全集看下面的[找更多插件](#找更多插件)。
 
-### 界面与侧栏
-
-| 插件 | 说明 | 作者 / 仓库 |
+| 插件 | 干什么用的 | 作者 / 仓库 |
 | --- | --- | --- |
-| [`dsh-context`](https://www.npmjs.com/package/dsh-context) | 上下文洞察：Context 面板、浏览器、侧栏、`/context` 命令，看上下文组成与演进 | [bowenliang123](https://github.com/bowenliang123/dsh-context) |
-| [`dsh-better-sidebar`](https://www.npmjs.com/package/dsh-better-sidebar) | 侧栏底座：文件树、编辑器、变更、任务、侧聊集中在一列，并向其他插件开放注册 Tab / 文件查看器 | [omdsh-dev](https://github.com/omdsh-dev/DSH-better-sidebar) |
+| [`dsh-context`](https://www.npmjs.com/package/dsh-context) | 上下文洞察：Context 面板、侧栏、`/context` 命令，看上下文怎么组成、怎么演进 | [bowenliang123](https://github.com/bowenliang123/dsh-context) |
+| [`dsh-image-gen`](https://www.npmjs.com/package/dsh-image-gen) | 对话内生成 / 编辑图像，多模型（Gemini、OpenAI、Seedream、ComfyUI 等） | [shanliuling](https://github.com/shanliuling/dsh-image-gen) |
 | [`dsh-meme`](https://www.npmjs.com/package/dsh-meme) | 输入框一键发图、斗图；多图库、情绪与关键词搜图、AI 学图 | [yyh-001](https://github.com/yyh-001/dsh-meme) |
 | [`dsh-notify-me`](https://www.npmjs.com/package/dsh-notify-me) | 离开页面也能收到提醒：需要你操作、后台回复完成时发系统通知 | [chromoany](https://github.com/chromoany/dsh-notify-me) |
-| [`dsh-plugin-wallpaper-engine`](https://www.npmjs.com/package/dsh-plugin-wallpaper-engine) | 把本机 Wallpaper Engine 壁纸渲染到 Web UI 背后（WebGL / 视频 / 液态玻璃） | [elysia395](https://github.com/elysia395/dsh-wallpaper-engine) |
-| [`dsh-pet`](https://www.npmjs.com/package/dsh-pet) | 桌面上的蓝色大肥鱼：会溜达、会被拖走、顺手帮你盯余额 | [PC2005-cloud](https://github.com/PC2005-cloud/dsh-pet) |
-| [`dsh-chat-manager`](https://www.npmjs.com/package/dsh-chat-manager) | 会话与聊天记录管理：搜索归档、恢复对话、安全删除 | [WSL043](https://github.com/WSL043/dsh-chat-manager) |
-| [`dsh-where-did-my-tokens-go`](https://www.npmjs.com/package/dsh-where-did-my-tokens-go) | 深度思考指示器旁实时显示 token 计数 | [RevxZxCx](https://github.com/RevxZxCx/dsh-where-did-my-tokens-go) |
-
-### 图像、文档与视觉
-
-| 插件 | 说明 | 作者 / 仓库 |
-| --- | --- | --- |
-| [`dsh-image-gen`](https://www.npmjs.com/package/dsh-image-gen) | 对话内生成 / 编辑 / 对比图像，500+ 提示词、图库、多模型、ComfyUI | [shanliuling](https://github.com/shanliuling/dsh-image-gen) |
-| [`dsh-ppt`](https://www.npmjs.com/package/dsh-ppt) | 给材料，直接出可交付的演示文稿 | [STARDUSTLC666](https://github.com/STARDUSTLC666/dsh-ppt) |
-| [`dsh-univer-office`](https://www.npmjs.com/package/dsh-univer-office) | Univer 表格 / 文档 / 幻灯片预览与协作 Gateway（包体较大） | [dream-num](https://github.com/dream-num/dsh-univer-office) |
 | [`dsh-design`](https://www.npmjs.com/package/dsh-design) | 设计审查：`design_audit` 实测字号层级、WCAG 对比度、间距网格、配色漂移 | [Viger1](https://github.com/Viger1/dsh-design) |
-| [`@liustack/modlens`](https://www.npmjs.com/package/@liustack/modlens) | 给纯文本模型外挂视觉：贴图返回结构化证据（OCR / 版面 / 语义） | [liustack](https://github.com/liustack/modlens) |
-| [`@anionex/dsh-vision-toolkit`](https://www.npmjs.com/package/@anionex/dsh-vision-toolkit) | 视觉工具箱：图片问答、长截图 OCR、UI 还原、grounding、像素 diff | [Anionex](https://github.com/Anionex/dsh-vision-toolkit) |
 | [`dsh-media-desk`](https://www.npmjs.com/package/dsh-media-desk) | 一句话记灵感、一键出稿：口播脚本、标题、封面、配图、分镜 | [woniuniuniu](https://github.com/woniuniuniu/dsh-media-desk) |
-
-### 搜索、抓取与浏览器
-
-| 插件 | 说明 | 作者 / 仓库 |
-| --- | --- | --- |
 | [`@wxg-prc-cpg/browser-skill-dsh-plugin`](https://www.npmjs.com/package/@wxg-prc-cpg/browser-skill-dsh-plugin) | 把 BrowserSkill 浏览器自动化（`bsk_*` 工具）接进 DSH，用你已登录的真实浏览器 | [Tencent/BrowserSkill](https://github.com/Tencent/BrowserSkill) |
-| [`dsh-builtin-browser`](https://www.npmjs.com/package/dsh-builtin-browser) | 共享真实浏览器：可见、可接管、CDP 驱动，DOM 级交互与 cookie 持久化 | [wqty123](https://github.com/wqty123/dsh-browser) |
-| [`dsh-free-search`](https://www.npmjs.com/package/dsh-free-search) | 免费网页搜索，27 个引擎，多数无需 API Key | [DDDMUC](https://github.com/DDDMUC/dsh-free-search) |
 
-### 记忆与上下文压缩
-
-| 插件 | 说明 | 作者 / 仓库 |
-| --- | --- | --- |
-| [`dsh-mnemon`](https://www.npmjs.com/package/dsh-mnemon) | 可组合的视图式上下文：可插拔来源与策略，分层记忆 + 自演化技能 | [omdsh-dev](https://github.com/omdsh-dev/dsh-mnemon) |
-| [`dsh-lite-memory`](https://www.npmjs.com/package/dsh-lite-memory) | 按需记忆：不常驻，命中时最多三张小卡片，正文按需读取 | [regrevia](https://github.com/regrevia/dsh-lite-memory) |
-| [`dsh-soul-md`](https://www.npmjs.com/package/dsh-soul-md) | soul.md 风人设 + 长期记忆，可按工作区 / 会话切换人设 | [Scorp1o117](https://github.com/Scorp1o117/dsh-soul-md) |
-| [`billion-context`](https://www.npmjs.com/package/billion-context) | 上下文压缩：小窗口也够用、省 token、支持月级长会话 | [ranxianglei](https://github.com/ranxianglei/billion-context) |
-
-### 模型与订阅
-
-| 插件 | 说明 | 作者 / 仓库 |
-| --- | --- | --- |
-| [`dsh-codex-subscription`](https://www.npmjs.com/package/dsh-codex-subscription) | 把 ChatGPT / Codex 订阅当 DSH 的 LLM provider（OAuth、额度、Fast 模式） | [WSL043](https://github.com/WSL043/dsh-codex-subscription) |
-| [`dsh-plugin-subscriptions`](https://www.npmjs.com/package/dsh-plugin-subscriptions) | ChatGPT(Codex)、Claude、Grok、Copilot、Antigravity 订阅接入，Web 设置页 OAuth 登录 | [V1ki](https://github.com/V1ki/dsh-plugin-subscriptions) |
-| [`dsh-connect-workbuddy`](https://www.npmjs.com/package/dsh-connect-workbuddy) | 把本机登录的 WorkBuddy 模型接进 DSH，读积分倍率、多账号切换 | [dingminhua](https://github.com/dingminhua/dsh-connect-workbuddy) |
-
-### 远程、移动与 IM
-
-| 插件 | 说明 | 作者 / 仓库 |
-| --- | --- | --- |
-| [`dsh-remote`](https://www.npmjs.com/package/dsh-remote) | SSH 远程工作助手：多跳 ProxyJump、21 个 `rw_*` 工具、镜像同步、内置 PTY | [flymysql](https://github.com/flymysql/dsh-remote) |
-| [`dsh-mobile`](https://www.npmjs.com/package/dsh-mobile) | 移动端适配与安全访问：局域网、远程连接、Android App、手机浏览器 | [saya-ch](https://github.com/saya-ch/dsh-mobile) |
-| [`dsh-pocket`](https://www.npmjs.com/package/dsh-pocket) | 手机扫码同步访问电脑上的 DSH（局域网 + 公网） | [shaobeichen](https://github.com/shaobeichen/dsh-pocket) |
-| [`@xmanrui/dsh-im`](https://www.npmjs.com/package/@xmanrui/dsh-im) | 微信 / 飞书 / 企微 / 钉钉 / QQ / Telegram / Slack / Discord 接入 DSH | [xmanrui](https://github.com/xmanrui/dsh-im) |
-| [`@tencent-connect/dsh-qqbot`](https://www.npmjs.com/package/@tencent-connect/dsh-qqbot) | 在 QQ 私聊和群聊里直接对话 DeepSeek Harness | [tencent-connect](https://github.com/tencent-connect/dsh-qqbot) |
-
-### 多 Agent 与终端
-
-| 插件 | 说明 | 作者 / 仓库 |
-| --- | --- | --- |
-| [`@nanmicoder/dsh-agent-teams`](https://www.npmjs.com/package/@nanmicoder/dsh-agent-teams) | 多智能体团队协作：队长、成员、依赖任务、消息，GUI 有树状监控 | [NanmiCoder](https://github.com/NanmiCoder/dsh-agent-teams) |
-| [`@deepseek-harness-tui/dsh-tui`](https://www.npmjs.com/package/@deepseek-harness-tui/dsh-tui) | 终端 TUI 客户端（Claude Code 风格），补官方空档 | [ccch1mneyyy](https://github.com/ccch1mneyyy/dsh-TUI) |
-
-### 插件治理与工具链
-
-| 插件 | 说明 | 作者 / 仓库 |
-| --- | --- | --- |
-| [`dshmarket`](https://www.npmjs.com/package/dshmarket) | 装在界面里的可视化插件市场，浏览 / 搜索 / 一键安装 | [dsh-market](https://github.com/dsh-market/dsh-market) |
-| [`dsh-plugin-health`](https://www.npmjs.com/package/dsh-plugin-health) | 诊断插件安装、兼容性与加载失败，给可回滚的修复方案 | [EasonMWS](https://github.com/EasonMWS/dsh-plugin-health) |
-| [`dsh-plugin-toolkit`](https://www.npmjs.com/package/dsh-plugin-toolkit) | 插件预检、发布与测试：检查目录或 GitHub 仓库、等 npm 真的发出新版本 | [WJDdidi-1](https://github.com/WJDdidi-1/dsh-plugin-toolkit) |
-| [`dsh-trust-check`](https://www.npmjs.com/package/dsh-trust-check) | 静态能力披露：插件申请了哪些能力、注入了什么提示词、装了什么脚本 | [liuwenji007](https://github.com/liuwenji007/dsh-trust-check) |
-| [`dsh-ops`](https://www.npmjs.com/package/dsh-ops) | 原生文件与 PTC 工具，覆盖 Windows x64 / Linux x64 / macOS | [T-Auto](https://github.com/T-Auto/dsh-ops) |
-| [`dsh-cost-meter`](https://www.npmjs.com/package/dsh-cost-meter) | 会话费用统计：本会话成本、当日费用、历史记录、多厂商模型计价 | [Han-1413141](https://github.com/Han-1413141/dsh-cost-meter) |
-
-> 清单随实际使用更新。**装了但不好用的会被移出去**，没列进来不代表不好。
+就这些，没有更多。这张表只会因为我真的装了新东西才变长。
 
 ---
 
@@ -231,9 +163,9 @@ cp -r templates/minimal-host-plugin plugins/my-plugin
 
 别人的插件进这份清单，要满足：
 
-1. npm 上能装到，`dsh.bundle.patch` 存在，`repository` 指向可访问仓库；
-2. README 说清楚它是干什么的、装完怎么触发；
-3. 我自己实际装过、用过至少一次。
+1. **我自己实际装过、用过至少一次**（这条是硬门槛，没装过的不进清单）；
+2. npm 上能装到，`dsh.bundle.patch` 存在，`repository` 指向可访问仓库；
+3. README 说清楚它是干什么的、装完怎么触发。
 
 自研插件进 `plugins/` 要满足：
 
