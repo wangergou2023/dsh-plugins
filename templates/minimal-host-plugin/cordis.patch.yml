@@ -1,0 +1,7 @@
+# Bundle patch layer. Every row here becomes a Cordis loader entry.
+# `name` must be the real package specifier the loader can import —
+# a wrong name produces "Cannot find package '<name>'" at activation.
+- insert:
+    - id: my-plugin
+      name: '@local/my-plugin'
+      config: {}

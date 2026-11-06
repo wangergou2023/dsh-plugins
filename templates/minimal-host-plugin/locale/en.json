@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "My plugin",
+    "description": "A minimal host plugin template: logs a greeting when it activates."
+  }
+}
