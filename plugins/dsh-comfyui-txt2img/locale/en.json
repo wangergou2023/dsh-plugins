@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "Text-to-Image",
+    "description": "Generate images with Krea2 Turbo: prompt, LoRA, style suffix, 1-4 images per run."
+  }
+}

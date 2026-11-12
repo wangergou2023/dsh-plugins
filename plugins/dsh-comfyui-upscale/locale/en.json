@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "Image Upscale",
+    "description": "Upscale images 1-8x with SeedVR2; tile size, overlap and color correction adjustable."
+  }
+}

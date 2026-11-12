@@ -1,0 +1,5 @@
+# Bundle patch layer for dsh-comfyui-txt2img
+- insert:
+    - id: comfyui-txt2img
+      name: 'dsh-comfyui-txt2img'
+      config: {}

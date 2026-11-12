@@ -1,0 +1,5 @@
+# Bundle patch layer for dsh-comfyui-upscale
+- insert:
+    - id: comfyui-upscale
+      name: 'dsh-comfyui-upscale'
+      config: {}

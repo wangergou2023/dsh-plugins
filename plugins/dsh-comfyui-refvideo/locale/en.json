@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "Reference-to-Video",
+    "description": "Generate reference-driven short videos with MiniMax H3 from reference images, videos and audio."
+  }
+}

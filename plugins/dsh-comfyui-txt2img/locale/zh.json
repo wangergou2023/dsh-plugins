@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "文生图",
+    "description": "用 Krea2 Turbo 文生图：提示词 + LoRA + 风格后缀，一次 1–4 张，带 AI 润化与提示词扩写预览。"
+  }
+}

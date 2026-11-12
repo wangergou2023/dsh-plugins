@@ -1,0 +1,134 @@
+{
+  "name": "krea2_turbo_t2i",
+  "workflow": "krea2_turbo_t2i.api.json",
+  "note": "文生图：Krea2 Turbo 8 步。TextGenerate 负责提示词扩写（30:24）；LoRA 开关（30:23）与风格后缀开关（800）已解耦，后缀文本在 30:27。",
+  "knobs": {
+    "prompt": {
+      "node": "30:19",
+      "input": "value",
+      "kind": "string",
+      "required": true,
+      "label": "提示词"
+    },
+    "expandInstruction": {
+      "node": "30:18",
+      "input": "value",
+      "kind": "string",
+      "advanced": true,
+      "label": "扩写指令（TextGenerate 的系统提示）"
+    },
+    "aspectRatio": {
+      "node": "49",
+      "input": "aspect_ratio",
+      "kind": "enum",
+      "label": "比例",
+      "options": [
+        "1:1 (Square)",
+        "16:9 (Widescreen)",
+        "9:16 (Portrait)",
+        "4:3 (Standard)",
+        "3:4 (Portrait)",
+        "3:2 (Photo)",
+        "2:3 (Portrait Photo)"
+      ]
+    },
+    "megapixels": {
+      "node": "49",
+      "input": "megapixels",
+      "kind": "float",
+      "min": 0.2,
+      "max": 2.0,
+      "step": 0.05,
+      "default": 1,
+      "label": "像素(MP)"
+    },
+    "batchSize": {
+      "node": "30:5",
+      "input": "batch_size",
+      "kind": "int",
+      "min": 1,
+      "max": 4,
+      "default": 1,
+      "label": "张数"
+    },
+    "steps": {
+      "node": "30:3",
+      "input": "steps",
+      "kind": "int",
+      "min": 4,
+      "max": 30,
+      "default": 8,
+      "label": "步数"
+    },
+    "cfg": {
+      "node": "30:3",
+      "input": "cfg",
+      "kind": "float",
+      "min": 1,
+      "max": 5,
+      "step": 0.1,
+      "default": 1,
+      "label": "CFG"
+    },
+    "seed": {
+      "node": "30:3",
+      "input": "seed",
+      "kind": "seed",
+      "label": "种子"
+    },
+    "expand": {
+      "node": "30:24",
+      "input": "value",
+      "kind": "boolean",
+      "default": true,
+      "label": "AI 扩写提示词"
+    },
+    "loraEnabled": {
+      "node": "30:23",
+      "input": "value",
+      "kind": "boolean",
+      "default": false,
+      "label": "启用 LoRA"
+    },
+    "loraName": {
+      "node": "30:15",
+      "input": "lora_name",
+      "kind": "enum",
+      "label": "LoRA",
+      "optionsFrom": "loras",
+      "default": "krea2_darkbrush.safetensors"
+    },
+    "loraStrength": {
+      "node": "30:15",
+      "input": "strength_model",
+      "kind": "float",
+      "min": -2,
+      "max": 2,
+      "step": 0.05,
+      "default": 0.8,
+      "label": "LoRA 强度"
+    },
+    "suffixEnabled": {
+      "node": "800",
+      "input": "value",
+      "kind": "boolean",
+      "default": false,
+      "label": "追加风格后缀"
+    },
+    "styleSuffix": {
+      "node": "30:27",
+      "input": "string_b",
+      "kind": "string",
+      "default": "muted minimalist sketch style",
+      "label": "风格后缀文本"
+    }
+  },
+  "output": {
+    "saveNode": "29",
+    "class_type": "SaveImage",
+    "filenamePrefix": "Krea2_turbo",
+    "batch": true,
+    "previewNode": "30:20",
+    "note": "previewNode 是 PreviewAny：它透传的 text 就是扩写后真正送进模型的那段提示词，从 /history 的 outputs['30:20'].text[0] 取"
+  }
+}

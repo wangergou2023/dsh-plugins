@@ -1,0 +1,5 @@
+# Bundle patch layer for dsh-comfyui-imgedit
+- insert:
+    - id: comfyui-imgedit
+      name: 'dsh-comfyui-imgedit'
+      config: {}

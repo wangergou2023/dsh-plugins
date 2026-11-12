@@ -26,7 +26,10 @@
 
 | 插件 | 状态 | 说明 |
 | --- | --- | --- |
-| _暂无_ | — | 第一个插件整理中，起步见 [`templates/minimal-host-plugin`](templates/minimal-host-plugin) |
+| [`dsh-comfyui-refvideo`](plugins/dsh-comfyui-refvideo) | 可用 | 参考生视频：参考图 / 视频 / 音频 → MiniMax H3 短视频 |
+| [`dsh-comfyui-txt2img`](plugins/dsh-comfyui-txt2img) | 可用 | 文生图：Krea2 Turbo，LoRA 与风格后缀 |
+| [`dsh-comfyui-upscale`](plugins/dsh-comfyui-upscale) | 可用 | 图片放大：SeedVR2，1–8 倍 |
+| [`dsh-comfyui-imgedit`](plugins/dsh-comfyui-imgedit) | 可用 | 图片编辑：多图合成一张（Qwen-Image 2.1） |
 
 自研插件按 `plugins/<name>/` 组织，每个目录是一个可以直接 `dsh plugin add` 的独立包：
 

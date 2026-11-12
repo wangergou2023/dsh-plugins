@@ -1,0 +1,77 @@
+{
+  "name": "minimax_h3_ref2va",
+  "workflow": "minimax_h3_ref2va.api.json",
+  "targetNode": "136",
+  "targetClass": "MiniMaxH3ReferenceToVideo",
+
+  "knobs": {
+    "prompt": { "node": "136", "input": "prompt", "kind": "string", "required": true },
+    "aspectRatio": {
+      "node": "115", "input": "aspect_ratio", "kind": "enum",
+      "options": ["16:9 (Widescreen)", "9:16 (Portrait)", "1:1 (Square)", "4:3 (Standard)", "3:4 (Portrait)", "21:9 (Cinematic)"]
+    },
+    "megapixels": { "node": "115", "input": "megapixels", "kind": "float", "min": 0.2, "max": 1.0, "step": 0.01, "default": 0.4 },
+    "durationSeconds": { "node": "132", "input": "value", "kind": "float", "min": 5, "max": 15, "default": 5, "note": "帧数由 131 按 24fps + %17 对齐自动换算，不要直接写 length；模型训练区间约 124-362 帧(≈5-15s)，短于 5s 不属于训练分布" },
+    "seed": { "node": "129", "input": "noise_seed", "kind": "seed", "note": "每次随机时由调用方生成" },
+    "lightning": { "node": "146", "input": "value", "kind": "boolean", "default": true, "note": "true = 走 LoRA 加速路（4 步），false = 全量 20 步" },
+    "stepsFull": { "node": "143", "input": "value", "kind": "int", "default": 20 },
+    "stepsTurbo": { "node": "144", "input": "value", "kind": "int", "default": 4 },
+    "lora": {
+      "node": "145", "input": "lora_name", "kind": "enum",
+      "options": [
+        "minimax_h3_ref2v_turbo_4step_v0.1_comfyui_bf16.safetensors",
+        "minimax_h3_ref2v_turbo_8step_v1.0_768p_comfyui_bf16.safetensors",
+        "minimax_h3_dmad_full_dareties_v4_step600_comfy_fro.safetensors"
+      ],
+      "default": "minimax_h3_ref2v_turbo_4step_v0.1_comfyui_bf16.safetensors"
+    },
+    "refImageSize": { "node": "136", "input": "ref_image_size", "kind": "enum", "options": ["match", "max"], "default": "match" }
+  },
+
+  "refSlots": {
+    "images": {
+      "keyPattern": "ref_images.ref_image_{i}",
+      "max": 9,
+      "label": "<Picture {n}>",
+      "node": { "class_type": "LoadImage", "fileInput": "image", "imageOutput": 0 },
+      "idBase": 900
+    },
+    "videos": {
+      "keyPattern": "ref_videos.ref_video_{i}",
+      "max": 3,
+      "label": "<Video {n}>",
+      "node": { "class_type": "LoadVideo", "fileInput": "file" },
+      "bridge": { "class_type": "GetVideoComponents", "inputs": { "video": [null, 0] }, "imageOutput": 0 },
+      "audioKeyPattern": "ref_video_audios.ref_video_audio_{i}",
+      "audioOutput": 1,
+      "note": "LoadVideo 输出 VIDEO，必须经 GetVideoComponents 拆成帧(images)与音轨(audio)；帧进 ref_videos，音轨进 ref_video_audios 且同号配对",
+      "idBase": 920
+    },
+    "audios": {
+      "keyPattern": "ref_audios.ref_audio_{i}",
+      "max": 3,
+      "label": "<Audio {n}>",
+      "node": { "class_type": "LoadAudio", "fileInput": "audio", "audioOutput": 0 },
+      "idBase": 940
+    }
+  },
+
+  "idAllocation": {
+    "note": "模板自身占用 92,115,119-146；运行时注入节点一律从 900 起，各类型错开 20，避免与模板 id 冲突",
+    "image": 900,
+    "video": 920,
+    "audio": 940
+  },
+
+  "promptTagOrder": {
+    "note": "提示词里的 <Picture N>/<Video N>/<Audio N> 按各类型的连接顺序从 1 编号，与数组下标 i 差 1",
+    "rule": "第 i 个参考图 -> <Picture i+1>"
+  },
+
+  "output": {
+    "saveNode": "92",
+    "class_type": "SaveVideo",
+    "filenamePrefix": "video/MiniMax_H3",
+    "note": "从 /history 的 outputs['92'] 取第一个带 filename 的条目；扩展名是 mp4"
+  }
+}

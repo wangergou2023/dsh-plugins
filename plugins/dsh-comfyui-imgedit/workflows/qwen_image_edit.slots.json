@@ -1,0 +1,131 @@
+{
+  "name": "qwen_image_edit",
+  "workflow": "qwen_image_edit.api.json",
+  "note": "图片编辑：Qwen-Image 2.1。主体图必填，参考图（服饰/风格）可选；提示词可交给工作流内的 TextGenerate 增强；默认按输入图尺寸出图。",
+  "knobs": {
+    "image": {
+      "node": "470",
+      "input": "image",
+      "kind": "enum",
+      "required": true,
+      "label": "主体图"
+    },
+    "image2": {
+      "node": "475",
+      "input": "image",
+      "kind": "enum",
+      "label": "参考图（可选）"
+    },
+    "prompt": {
+      "node": "459:484",
+      "input": "on_false",
+      "kind": "string",
+      "required": true,
+      "label": "编辑指令"
+    },
+    "negative": {
+      "node": "459:474",
+      "input": "negative_prompt",
+      "kind": "string",
+      "label": "负向提示词"
+    },
+    "enhance": {
+      "node": "459:484",
+      "input": "switch",
+      "kind": "boolean",
+      "default": false,
+      "label": "提示词增强",
+      "note": "开=交工作流内的 TextGenerate 扩写指令（同一个 prompt 也写给 459:500）"
+    },
+    "enhancePrompt": {
+      "node": "459:500",
+      "input": "prompt",
+      "kind": "string",
+      "advanced": true,
+      "label": "增强节点输入"
+    },
+    "steps": {
+      "node": "459:458",
+      "input": "steps",
+      "kind": "int",
+      "min": 4,
+      "max": 60,
+      "default": 25,
+      "label": "步数"
+    },
+    "cfg": {
+      "node": "459:458",
+      "input": "cfg",
+      "kind": "float",
+      "min": 1,
+      "max": 10,
+      "step": 0.1,
+      "default": 1,
+      "label": "CFG"
+    },
+    "seed": {
+      "node": "459:458",
+      "input": "seed",
+      "kind": "seed",
+      "label": "种子"
+    },
+    "resolution": {
+      "node": "459:474",
+      "input": "resolution",
+      "kind": "int",
+      "min": 0,
+      "max": 2048,
+      "step": 64,
+      "default": 0,
+      "label": "参考图分辨率",
+      "note": "0 = 自动；把参考图缩放到约 resolution×resolution 后再喂给文本编码器"
+    },
+    "fixedSize": {
+      "node": "459:468",
+      "input": "switch",
+      "kind": "boolean",
+      "default": false,
+      "label": "固定出图尺寸",
+      "note": "关=按输入图裁出的 latent；开=用下面的宽高"
+    },
+    "width": {
+      "node": "459:456",
+      "input": "width",
+      "kind": "int",
+      "min": 256,
+      "max": 2048,
+      "step": 64,
+      "default": 1024,
+      "label": "宽"
+    },
+    "height": {
+      "node": "459:456",
+      "input": "height",
+      "kind": "int",
+      "min": 256,
+      "max": 2048,
+      "step": 64,
+      "default": 1024,
+      "label": "高"
+    },
+    "filenamePrefix": {
+      "node": "461",
+      "input": "filename_prefix",
+      "kind": "string",
+      "default": "Qwen_image_2.1",
+      "label": "输出前缀"
+    }
+  },
+  "removeWhenEmpty": {
+    "image2": {
+      "node": "475",
+      "key": "images.image_2"
+    },
+    "note": "没给参考图时，把这一个 LoadImage 节点和 TextEncode 上的 images.image_2 键一起删掉，避免空文件名导致校验失败"
+  },
+  "output": {
+    "saveNode": "461",
+    "class_type": "SaveImageAdvanced",
+    "note": "从 /history 的 outputs['461'].images 取；已去掉画布上的 ImageCompare 预览节点"
+  }
+}

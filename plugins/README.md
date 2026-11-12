@@ -43,4 +43,7 @@ node scripts/check-manifests.mjs
 
 | 插件 | 说明 |
 | --- | --- |
-| _暂无_ | — |
+| [`dsh-comfyui-refvideo`](dsh-comfyui-refvideo) | 参考生视频：9 图 / 3 视频 / 3 音频 → MiniMax H3 短片段 |
+| [`dsh-comfyui-txt2img`](dsh-comfyui-txt2img) | 文生图：Krea2 Turbo，提示词 + LoRA + 风格后缀 |
+| [`dsh-comfyui-upscale`](dsh-comfyui-upscale) | 图片放大：SeedVR2，1–8 倍 |
+| [`dsh-comfyui-imgedit`](dsh-comfyui-imgedit) | 图片编辑：1–10 张参考图合成一张（Qwen-Image 2.1） |

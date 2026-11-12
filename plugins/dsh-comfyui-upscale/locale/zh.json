@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "图片放大",
+    "description": "用 SeedVR2 把图片放大 1–8 倍，4096² 约 30 秒；支持从 output 选图与颜色校正。"
+  }
+}

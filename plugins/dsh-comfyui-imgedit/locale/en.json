@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "Image Edit / Compose",
+    "description": "Compose 1-10 reference images into one picture with Qwen-Image 2.1; the polish step reads the images first."
+  }
+}

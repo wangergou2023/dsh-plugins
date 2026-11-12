@@ -1,0 +1,5 @@
+# Bundle patch layer for dsh-comfyui-refvideo
+- insert:
+    - id: comfyui-refvideo
+      name: 'dsh-comfyui-refvideo'
+      config: {}

@@ -1,0 +1,28 @@
+{
+  "name": "seedvr2_upscale_image",
+  "workflow": "seedvr2_upscale_image.api.json",
+  "note": "图片放大：SeedVR2 7B（int8），先用 ResizeImageMaskNode 按倍数放大，再交 SeedVR2 单步重绘（steps=1、cfg=1），最后按原图做颜色校正。",
+
+  "knobs": {
+    "image": { "node": "1", "input": "image", "kind": "enum", "required": true, "label": "输入图片", "optionsFrom": "inputImages", "note": "ComfyUI input 目录里的文件名；面板上传后自动填" },
+    "scale": { "node": "66:57", "input": "resize_type.multiplier", "kind": "float", "min": 1, "max": 8, "step": 0.5, "default": 4, "label": "放大倍数" },
+    "scaleMethod": { "node": "66:57", "input": "scale_method", "kind": "enum", "label": "预放大算法", "options": ["lanczos", "bicubic", "bilinear", "nearest", "area"] },
+    "tileSize": { "node": "66:48", "input": "tile_size", "kind": "int", "min": 256, "max": 1024, "step": 64, "default": 512, "label": "分块大小", "note": "显存不够就调小；同样写入解码节点" },
+    "overlap": { "node": "66:48", "input": "overlap", "kind": "int", "min": 0, "max": 256, "step": 16, "default": 128, "label": "块间重叠" },
+    "seed": { "node": "66:54", "input": "seed", "kind": "seed", "label": "种子" },
+    "colorCorrection": { "node": "66:59", "input": "color_correction_method", "kind": "enum", "label": "颜色校正", "options": ["none", "lab", "adain"] },
+    "filenamePrefix": { "node": "9", "input": "filename_prefix", "kind": "string", "default": "seedvr2_after/image", "label": "输出前缀" }
+  },
+
+  "mirrorKnobs": {
+    "tileSize": { "node": "66:55", "input": "tile_size" },
+    "overlap": { "node": "66:55", "input": "overlap" },
+    "note": "编码与解码两个节点的 tile 参数必须一致，改一个要同步另一个"
+  },
+
+  "output": {
+    "saveNode": "9",
+    "class_type": "SaveImage",
+    "note": "从 /history 的 outputs['9'].images 取；对比预览节点 65（ImageCompare）不进产物"
+  }
+}
