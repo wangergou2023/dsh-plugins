@@ -329,6 +329,96 @@ export function apply(ctx) {
       },
     }));
 
+    // ---------- lyrics（按主题写词） ----------
+    disposers.push(webServer.register({
+      kind: 'exact',
+      path: '/api/comfyui-txt2music/lyrics',
+      handler: async (request, response) => {
+        if (request.method !== 'POST') { sendJson(response, 405, { error: 'method_not_allowed' }); return; }
+        if (!sameOrigin(request)) { sendJson(response, 403, { error: 'forbidden: same-origin only' }); return; }
+
+        const body = await readJsonBody(request);
+        const theme = String((body && body.theme) || '').trim();
+        if (!theme) { sendJson(response, 400, { error: 'theme_required', message: '写一句主题或故事，再点写词' }); return; }
+        const style = String((body && body.style) || '').trim();
+        const language = String((body && body.language) || '中文').trim();
+
+        let llm;
+        try { llm = ctx.get('llm'); } catch { llm = undefined; }
+        if (!llm || typeof llm.stream !== 'function') {
+          sendJson(response, 503, { error: 'llm_unavailable', message: '当前宿主没有可用的模型服务（llm）' });
+          return;
+        }
+
+        let selection;
+        try {
+          const service = ctx.get('agentDefaultModel');
+          const current = service && typeof service.currentSelection === 'function' ? service.currentSelection() : undefined;
+          if (current && typeof current.provider === 'string' && typeof current.model === 'string') selection = current;
+        } catch { /* 走默认 */ }
+
+        const system = [
+          '你是写词的人，为歌曲写完整歌词。',
+          '任务：根据用户给的主题写一首歌词，只输出歌词本身。',
+          '',
+          '硬性要求：',
+          '1. 用 [Verse] / [Chorus] / [Bridge] / [Outro] 标记段落，副歌出现两次以上时内容保持一致。',
+          '2. 一行一句，短句为主；不要押韵玩文字游戏，先把话说清楚。',
+          '3. 用具体画面、动作、物件代替形容词和情绪词（例如写「门关上的声音」而不是「我很伤心」）。',
+          '4. 副歌要有一句能被记住的句子，反复出现。',
+          '5. 只输出歌词，不要标题、不要解释、不要代码块。',
+        ].join('\n');
+
+        const user = `主题：${theme}\n曲风：${style || '（未指定）'}\n语言：${language}`;
+
+        const controller = new AbortController();
+        const timer = setTimeout(() => controller.abort(), 180000);
+        try {
+          const options = {
+            messages: hostMessages(system, user),
+            maxTokens: 2400,
+            signal: controller.signal,
+            reasoningEffort: 'off',
+          };
+          if (selection) {
+            options.provider = selection.provider;
+            options.model = selection.model;
+          }
+
+          const consume = async (opts) => {
+            let text = '';
+            const streamed = new Set();
+            for await (const chunk of llm.stream(opts)) {
+              if (!chunk) continue;
+              if (chunk.type === 'text-delta' && typeof chunk.text === 'string') {
+                text += chunk.text;
+                streamed.add(chunk.index);
+              } else if (chunk.type === 'block-end' && chunk.block && chunk.block.type === 'text' && typeof chunk.block.text === 'string') {
+                if (!streamed.has(chunk.index)) text += chunk.block.text;
+              }
+            }
+            return text;
+          };
+
+          let out = '';
+          try {
+            out = (await consume(options)).trim();
+          } catch {
+            const fallback = { ...options };
+            delete fallback.reasoningEffort;
+            out = (await consume(fallback)).trim();
+          }
+
+          if (!out) { sendJson(response, 502, { error: 'empty_completion', message: '模型没有返回歌词，换个模型再试' }); return; }
+          sendJson(response, 200, { text: out, model: selection ? selection.model : 'default' });
+        } catch (error) {
+          sendJson(response, 502, { error: 'llm_failed', message: String((error && error.message) || error) });
+        } finally {
+          clearTimeout(timer);
+        }
+      },
+    }));
+
     // ---------- outputs ----------
     disposers.push(webServer.register({
       kind: 'exact',

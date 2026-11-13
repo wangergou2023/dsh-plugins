@@ -70,6 +70,9 @@ window.__ModuleLoader__.load({
       const [prevStyle, setPrevStyle] = React.useState('');
       const [history, setHistory] = React.useState([]);
       const [outputs, setOutputs] = React.useState([]);
+      const [theme, setTheme] = React.useState('');
+      const [writing, setWriting] = React.useState(false);
+      const [prevLyrics, setPrevLyrics] = React.useState('');
 
       React.useEffect(function () {
         try { window.localStorage.setItem(FORM_KEY, JSON.stringify(form)); } catch { /* 忽略 */ }
@@ -142,6 +145,29 @@ window.__ModuleLoader__.load({
           setError('润化失败：' + String((err && err.message) || err));
         } finally {
           setPolishing(false);
+        }
+      }
+
+      async function writeLyrics() {
+        setError('');
+        if (!theme.trim()) { setError('先写一句主题或故事，再点写词'); return; }
+        setWriting(true);
+        try {
+          const data = await api('/api/comfyui-txt2music/lyrics', {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({
+              theme: theme,
+              style: form.style,
+              language: /[\u4e00-\u9fa5]/.test(theme) ? '中文' : '跟随主题语言',
+            }),
+          });
+          setPrevLyrics(form.lyrics);
+          set('lyrics', data.text || form.lyrics);
+        } catch (err) {
+          setError('写词失败：' + String((err && err.message) || err));
+        } finally {
+          setWriting(false);
         }
       }
 
@@ -222,8 +248,26 @@ window.__ModuleLoader__.load({
           style: { width: '100%', resize: 'vertical', fontFamily: 'inherit', fontSize: '13px', marginBottom: '10px' },
         }),
 
-        h('div', { style: { fontSize: '12px', opacity: 0.65, marginBottom: '4px' } },
-          '歌词：用 [Verse] / [Chorus] 分段，每行一句；空白行会被当成段落分隔'),
+        h('div', { style: { display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap', marginBottom: '4px' } },
+          h('span', { style: { fontSize: '12px', opacity: 0.65 } },
+            '歌词：用 [Verse] / [Chorus] 分段，每行一句；空白行会被当成段落分隔'),
+          h('input', {
+            value: theme,
+            onChange: function (e) { setTheme(e.target.value); },
+            placeholder: '主题 / 故事，例如「周末只在下午三点见面」',
+            style: { flex: '1 1 240px', fontSize: '12px', minWidth: '160px' },
+          }),
+          h('button', {
+            className: 'cfl-chip', disabled: writing, onClick: writeLyrics, style: { fontSize: '12px' },
+            title: '按上面的主题写一首歌词，覆盖当前歌词',
+          }, writing ? '写词中…' : '✍ 写词'),
+          prevLyrics
+            ? h('button', {
+                className: 'cfl-chip', style: { fontSize: '12px' },
+                onClick: function () { set('lyrics', prevLyrics); setPrevLyrics(''); },
+              }, '↩ 撤销写词')
+            : null
+        ),
         h('textarea', {
           value: form.lyrics,
           onChange: function (e) { set('lyrics', e.target.value); },
