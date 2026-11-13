@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "文生音乐",
+    "description": "用 YuE2 3B 生成音乐：曲风描述 + 歌词，先写曲式再合成，可导出 FLAC/MP3/Opus。"
+  }
+}

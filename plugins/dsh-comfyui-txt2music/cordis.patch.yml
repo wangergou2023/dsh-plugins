@@ -1,0 +1,5 @@
+# Bundle patch layer for dsh-comfyui-txt2music
+- insert:
+    - id: comfyui-txt2music
+      name: 'dsh-comfyui-txt2music'
+      config: {}

@@ -30,6 +30,7 @@
 | [`dsh-comfyui-txt2img`](plugins/dsh-comfyui-txt2img) | 可用 | 文生图：Krea2 Turbo，LoRA 与风格后缀 |
 | [`dsh-comfyui-upscale`](plugins/dsh-comfyui-upscale) | 可用 | 图片放大：SeedVR2，1–8 倍 |
 | [`dsh-comfyui-imgedit`](plugins/dsh-comfyui-imgedit) | 可用 | 图片编辑：多图合成一张（Qwen-Image 2.1） |
+| [`dsh-comfyui-txt2music`](plugins/dsh-comfyui-txt2music) | 可用 | 文生音乐：YuE2 3B，曲风 + 歌词 → 歌 |
 
 自研插件按 `plugins/<name>/` 组织，每个目录是一个可以直接 `dsh plugin add` 的独立包：
 

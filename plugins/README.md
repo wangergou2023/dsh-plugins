@@ -47,3 +47,4 @@ node scripts/check-manifests.mjs
 | [`dsh-comfyui-txt2img`](dsh-comfyui-txt2img) | 文生图：Krea2 Turbo，提示词 + LoRA + 风格后缀 |
 | [`dsh-comfyui-upscale`](dsh-comfyui-upscale) | 图片放大：SeedVR2，1–8 倍 |
 | [`dsh-comfyui-imgedit`](dsh-comfyui-imgedit) | 图片编辑：1–10 张参考图合成一张（Qwen-Image 2.1） |
+| [`dsh-comfyui-txt2music`](dsh-comfyui-txt2music) | 文生音乐：YuE2 3B，曲风 + 歌词 → 歌（FLAC/MP3/Opus） |

@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "Text-to-Music",
+    "description": "Generate music with YuE2 3B from a style prompt and lyrics; optional ABC structure stage, FLAC/MP3/Opus output."
+  }
+}
