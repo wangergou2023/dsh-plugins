@@ -195,6 +195,30 @@ window.__ModuleLoader__.load({
         }
       }
 
+      async function rewriteLyrics() {
+        setError('');
+        if (!String(form.lyrics || '').trim()) { setError('先把歌词填进去，再点改写'); return; }
+        setPolishing(true);
+        try {
+          const data = await api('/api/comfyui-txt2music/lyrics', {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({
+              mode: 'rewrite',
+              lyrics: form.lyrics,
+              style: form.style,
+              language: '中文',
+            }),
+          });
+          setPrevLyrics(form.lyrics);
+          set('lyrics', data.text || form.lyrics);
+        } catch (err) {
+          setError('改写失败：' + String((err && err.message) || err));
+        } finally {
+          setPolishing(false);
+        }
+      }
+
       async function generate() {
         setError('');
         if (!String(form.style || '').trim()) { setError('曲风描述不能为空'); return; }
@@ -288,7 +312,11 @@ window.__ModuleLoader__.load({
           h('button', {
             className: 'cfl-chip', disabled: polishing, onClick: polishLyrics, style: { fontSize: '12px' },
             title: '保留你写的故事，只把表达改具体',
-          }, polishing ? '润色中…' : '🪄 润色歌词'),
+          }, polishing ? '润化中…' : '✨ AI 润化'),
+          h('button', {
+            className: 'cfl-chip', disabled: polishing, onClick: rewriteLyrics, style: { fontSize: '12px' },
+            title: '保留主题和结构，换一套意象重写',
+          }, polishing ? '改写中…' : '🔁 AI 改写'),
           prevLyrics
             ? h('button', {
                 className: 'cfl-chip', style: { fontSize: '12px' },

@@ -341,11 +341,11 @@ export function apply(ctx) {
         const mode = String((body && body.mode) || 'write');
         const original = String((body && body.lyrics) || '').trim();
         const theme = String((body && body.theme) || '').trim();
-        if (mode === 'polish' && !original) {
-          sendJson(response, 400, { error: 'lyrics_required', message: '要润色的话，先把歌词填进去' });
+        if ((mode === 'polish' || mode === 'rewrite') && !original) {
+          sendJson(response, 400, { error: 'lyrics_required', message: '先把歌词填进去，再点润化或改写' });
           return;
         }
-        if (mode !== 'polish' && !theme) {
+        if (mode === 'write' && !theme) {
           sendJson(response, 400, { error: 'theme_required', message: '写一句主题或故事，再点写词' });
           return;
         }
@@ -391,10 +391,27 @@ export function apply(ctx) {
           '6. 只输出歌词，不要标题、不要解释、不要代码块。',
         ].join('\n');
 
-        const system = mode === 'polish' ? polishSystem : writeSystem;
-        const user = mode === 'polish'
-          ? `曲风：${style || '（未指定）'}\n语言：${language}\n\n原歌词：\n${original}`
-          : `主题：${theme}\n曲风：${style || '（未指定）'}\n语言：${language}`;
+        const rewriteSystem = [
+          '你是歌词改写的人。',
+          '任务：把用户给的歌词换一种写法重写一遍，只输出改写后的歌词本身。',
+          '',
+          '硬性要求：',
+          '1. 保留原来的主题、人物与情感，但换一套意象和场景细节，不要照抄原句。',
+          '2. 保留段落标记与整体结构（[Verse] / [Chorus] / [Bridge] / [Outro]）。',
+          '3. 一行一句，短句为主；用具体画面代替情绪词。',
+          '4. 副歌要重新写一句记忆点，比原来更利落。',
+          '5. 长度控制在原文的 0.8–1.3 倍。',
+          '6. 只输出歌词，不要标题、不要解释、不要代码块。',
+        ].join('\n');
+
+        const system = mode === 'polish'
+          ? polishSystem
+          : mode === 'rewrite'
+            ? rewriteSystem
+            : writeSystem;
+        const user = mode === 'write'
+          ? `主题：${theme}\n曲风：${style || '（未指定）'}\n语言：${language}`
+          : `曲风：${style || '（未指定）'}\n语言：${language}\n\n原歌词：\n${original}`;
 
         const controller = new AbortController();
         const timer = setTimeout(() => controller.abort(), 180000);
