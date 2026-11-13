@@ -396,7 +396,7 @@ window.__ModuleLoader__.load({
             title: '用当前会话的模型改写提示词，并生成配套的风格后缀',
             onClick: polishPrompt,
             style: { fontSize: '12px' },
-          }, polishing ? '润化中…' : '✨ AI 润化'),
+          }, polishing ? '改写中…' : '✨ 改写提示词'),
           prevForm
             ? h('button', {
                 className: 'cfl-chip',
@@ -407,7 +407,7 @@ window.__ModuleLoader__.load({
                   setPrevForm(null);
                 },
                 style: { fontSize: '12px' },
-              }, '↩ 撤销润化')
+              }, '↩ 撤销')
             : null
         ),
 
@@ -501,11 +501,11 @@ window.__ModuleLoader__.load({
           cfg.suffixEnabled
             ? h('input', {
                 type: 'text', value: cfg.styleSuffix,
-                placeholder: '点「AI 润化」会自动生成，也可手填',
+                placeholder: '点「改写提示词」会自动生成，也可手填',
                 onChange: function (e) { setCfg(function (prev) { return { ...prev, styleSuffix: e.target.value }; }); },
                 style: { width: '360px' },
               })
-            : h('span', { style: { opacity: 0.5 } }, '（不追加；点「AI 润化」会生成并自动勾上）')
+            : h('span', { style: { opacity: 0.5 } }, '（不追加；点「改写提示词」会生成并自动勾上）')
         ),
 
         error ? h('div', { style: { color: '#e05c5c', fontSize: '13px', marginTop: '10px' } }, error) : null,

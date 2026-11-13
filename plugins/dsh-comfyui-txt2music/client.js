@@ -171,6 +171,30 @@ window.__ModuleLoader__.load({
         }
       }
 
+      async function polishLyrics() {
+        setError('');
+        if (!String(form.lyrics || '').trim()) { setError('先把歌词填进去，再点润色'); return; }
+        setPolishing(true);
+        try {
+          const data = await api('/api/comfyui-txt2music/lyrics', {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({
+              mode: 'polish',
+              lyrics: form.lyrics,
+              style: form.style,
+              language: '中文',
+            }),
+          });
+          setPrevLyrics(form.lyrics);
+          set('lyrics', data.text || form.lyrics);
+        } catch (err) {
+          setError('润色失败：' + String((err && err.message) || err));
+        } finally {
+          setPolishing(false);
+        }
+      }
+
       async function generate() {
         setError('');
         if (!String(form.style || '').trim()) { setError('曲风描述不能为空'); return; }
@@ -233,12 +257,12 @@ window.__ModuleLoader__.load({
           h('button', {
             className: 'cfl-chip', disabled: polishing, onClick: polish, style: { fontSize: '12px' },
             title: '用当前会话的模型把曲风描述写得更专业',
-          }, polishing ? '润化中…' : '✨ AI 润化'),
+          }, polishing ? '改写中…' : '✨ 改写曲风'),
           prevStyle
             ? h('button', {
                 className: 'cfl-chip', style: { fontSize: '12px' },
                 onClick: function () { set('style', prevStyle); setPrevStyle(''); },
-              }, '↩ 撤销润化')
+              }, '↩ 撤销')
             : null
         ),
         h('textarea', {
@@ -261,6 +285,10 @@ window.__ModuleLoader__.load({
             className: 'cfl-chip', disabled: writing, onClick: writeLyrics, style: { fontSize: '12px' },
             title: '按上面的主题写一首歌词，覆盖当前歌词',
           }, writing ? '写词中…' : '✍ 写词'),
+          h('button', {
+            className: 'cfl-chip', disabled: polishing, onClick: polishLyrics, style: { fontSize: '12px' },
+            title: '保留你写的故事，只把表达改具体',
+          }, polishing ? '润色中…' : '🪄 润色歌词'),
           prevLyrics
             ? h('button', {
                 className: 'cfl-chip', style: { fontSize: '12px' },

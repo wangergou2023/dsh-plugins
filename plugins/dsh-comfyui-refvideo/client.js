@@ -405,14 +405,14 @@ window.__ModuleLoader__.load({
               title: '用当前会话的模型把提示词改写成更适合参考生视频的一版',
               onClick: polish,
               style: { fontSize: '12px' },
-            }, polishing ? '润化中…' : '✨ AI 润化'),
+            }, polishing ? '改写中…' : '✨ 改写提示词'),
             prevPrompt
               ? h('button', {
                   className: 'cfl-chip',
                   title: '恢复润化前的提示词',
                   onClick: function () { setPrompt(prevPrompt); setPrevPrompt(''); },
                   style: { fontSize: '12px' },
-                }, '↩ 撤销润化')
+                }, '↩ 撤销')
               : null
             ,
             polishNote

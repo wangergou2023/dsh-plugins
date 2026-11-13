@@ -575,14 +575,14 @@ window.__ModuleLoader__.load({
             title: '用当前会话的模型改写编辑指令（不会加 <Picture N> 标签）',
             onClick: polishPrompt,
             style: { fontSize: '12px' },
-          }, polishing ? '润化中…' : '✨ AI 润化'),
+          }, polishing ? '改写中…' : '✨ 改写指令'),
           prevPrompt
             ? h('button', {
                 className: 'cfl-chip',
                 title: '恢复润化前的指令',
                 onClick: function () { setPrompt(prevPrompt); setPrevPrompt(''); },
                 style: { fontSize: '12px' },
-              }, '↩ 撤销润化')
+              }, '↩ 撤销')
             : null
           , polishNote
             ? h('span', { style: { fontSize: '11px', opacity: 0.55 } }, polishNote)

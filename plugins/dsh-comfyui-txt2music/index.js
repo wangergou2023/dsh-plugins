@@ -338,8 +338,17 @@ export function apply(ctx) {
         if (!sameOrigin(request)) { sendJson(response, 403, { error: 'forbidden: same-origin only' }); return; }
 
         const body = await readJsonBody(request);
+        const mode = String((body && body.mode) || 'write');
+        const original = String((body && body.lyrics) || '').trim();
         const theme = String((body && body.theme) || '').trim();
-        if (!theme) { sendJson(response, 400, { error: 'theme_required', message: '写一句主题或故事，再点写词' }); return; }
+        if (mode === 'polish' && !original) {
+          sendJson(response, 400, { error: 'lyrics_required', message: '要润色的话，先把歌词填进去' });
+          return;
+        }
+        if (mode !== 'polish' && !theme) {
+          sendJson(response, 400, { error: 'theme_required', message: '写一句主题或故事，再点写词' });
+          return;
+        }
         const style = String((body && body.style) || '').trim();
         const language = String((body && body.language) || '中文').trim();
 
@@ -357,7 +366,7 @@ export function apply(ctx) {
           if (current && typeof current.provider === 'string' && typeof current.model === 'string') selection = current;
         } catch { /* 走默认 */ }
 
-        const system = [
+        const writeSystem = [
           '你是写词的人，为歌曲写完整歌词。',
           '任务：根据用户给的主题写一首歌词，只输出歌词本身。',
           '',
@@ -369,7 +378,23 @@ export function apply(ctx) {
           '5. 只输出歌词，不要标题、不要解释、不要代码块。',
         ].join('\n');
 
-        const user = `主题：${theme}\n曲风：${style || '（未指定）'}\n语言：${language}`;
+        const polishSystem = [
+          '你是歌词润色的人。',
+          '任务：把用户给的歌词改写得更好，只输出改写后的歌词本身。',
+          '',
+          '硬性要求：',
+          '1. 保留原有的故事、人物、结构与段落标记，不要换题材。',
+          '2. 把抽象的情绪词换成具体画面、动作、物件（「我很想你」→ 具体的一个动作或一样东西）。',
+          '3. 收紧句子：能删的字删掉，一行一句，不要堆形容词。',
+          '4. 副歌保留那句记忆点，措辞可以更利落，但意思不能变。',
+          '5. 长度控制在原文的 0.8–1.2 倍。',
+          '6. 只输出歌词，不要标题、不要解释、不要代码块。',
+        ].join('\n');
+
+        const system = mode === 'polish' ? polishSystem : writeSystem;
+        const user = mode === 'polish'
+          ? `曲风：${style || '（未指定）'}\n语言：${language}\n\n原歌词：\n${original}`
+          : `主题：${theme}\n曲风：${style || '（未指定）'}\n语言：${language}`;
 
         const controller = new AbortController();
         const timer = setTimeout(() => controller.abort(), 180000);
