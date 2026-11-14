@@ -44,16 +44,36 @@ export async function buildPrompt(opts = {}) {
   const prompt = JSON.parse(JSON.stringify(spec.template));
   const knobs = spec.slots.knobs;
 
-  const text = String(opts.prompt || '').trim();
-  if (!text) throw new Error('prompt 不能为空');
+  const viewMode = String(opts.viewMode || 'single') === 'ortho4' ? 'ortho4' : 'single';
+  const rawText = String(opts.prompt || '').trim();
+  if (!rawText) throw new Error('prompt 不能为空');
+
+  // 四视图：套一层版式指令，用户只写角色本身
+  const text = viewMode === 'ortho4'
+    ? 'character turnaround sheet, exactly four figures arranged in a 2x2 grid, no more and no fewer, '
+      + 'top-left front view, top-right left profile view, bottom-left back view, bottom-right right profile view, '
+      + 'full body head to toe, clear gaps between panels, no overlapping, '
+      + 'identical design, identical colors and proportions in all four views, '
+      + 'neutral A-pose standing, orthographic camera, no perspective distortion, '
+      + 'seamless pure black background, soft even studio lighting, '
+      + rawText
+      + ', ultra detailed, sharp focus, no text, no watermark, no extra limbs, no duplicated torsos'
+    : rawText;
   prompt[knobs.prompt.node].inputs[knobs.prompt.input] = text;
 
-  const aspect = String(opts.aspectRatio || knobs.aspectRatio.options[0]);
+  // 四视图默认用 21:9 宽幅；用户显式给了别的比例/像素就不覆盖
+  const aspectDefault = viewMode === 'ortho4'
+    ? '1:1 (Square)'
+    : knobs.aspectRatio.options[0];
+  const aspect = String(opts.aspectRatio || aspectDefault);
   if (!knobs.aspectRatio.options.includes(aspect)) throw new Error(`aspectRatio 不在可选范围内：${aspect}`);
   prompt[knobs.aspectRatio.node].inputs[knobs.aspectRatio.input] = aspect;
 
+  const mpxFallback = viewMode === 'ortho4'
+    ? Math.min(knobs.megapixels.max, 2.0)
+    : knobs.megapixels.default;
   prompt[knobs.megapixels.node].inputs[knobs.megapixels.input] =
-    clamp(opts.megapixels, knobs.megapixels.min, knobs.megapixels.max, knobs.megapixels.default);
+    clamp(opts.megapixels, knobs.megapixels.min, knobs.megapixels.max, mpxFallback);
 
   prompt[knobs.batchSize.node].inputs[knobs.batchSize.input] =
     Math.round(clamp(opts.batchSize, knobs.batchSize.min, knobs.batchSize.max, knobs.batchSize.default));
@@ -97,6 +117,7 @@ export async function buildPrompt(opts = {}) {
     clamp(opts.loraStrength, knobs.loraStrength.min, knobs.loraStrength.max, knobs.loraStrength.default);
 
   const summary = {
+    viewMode,
     prompt: text,
     aspectRatio: aspect,
     megapixels: prompt[knobs.megapixels.node].inputs[knobs.megapixels.input],

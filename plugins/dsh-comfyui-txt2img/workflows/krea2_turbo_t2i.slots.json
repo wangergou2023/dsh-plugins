@@ -29,7 +29,8 @@
         "4:3 (Standard)",
         "3:4 (Portrait)",
         "3:2 (Photo)",
-        "2:3 (Portrait Photo)"
+        "2:3 (Portrait Photo)",
+        "21:9 (Ultrawide)"
       ]
     },
     "megapixels": {
@@ -37,7 +38,7 @@
       "input": "megapixels",
       "kind": "float",
       "min": 0.2,
-      "max": 2.0,
+      "max": 6.0,
       "step": 0.05,
       "default": 1,
       "label": "像素(MP)"

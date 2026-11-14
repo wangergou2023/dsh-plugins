@@ -156,9 +156,10 @@ export function apply(ctx) {
     parameters: {
       type: 'object',
       properties: {
+        viewMode: { type: 'string', enum: ['single', 'ortho4'], description: 'single=单视图（默认）；ortho4=四视图转盘横排，自动套版式提示词与 21:9' },
         prompt: { type: 'string', description: '提示词' },
         aspectRatio: { type: 'string', description: '比例，如 "1:1 (Square)" / "16:9 (Widescreen)" / "9:16 (Portrait)"' },
-        megapixels: { type: 'number', description: '总像素（百万），0.2–2.0，默认 1' },
+        megapixels: { type: 'number', description: '总像素（百万），0.2–6.0，默认 1；4.19 约等于 3128×1340' },
         batchSize: { type: 'number', description: '张数，1–4，默认 1' },
         steps: { type: 'number', description: '步数，默认 8（turbo 模型）' },
         cfg: { type: 'number', description: 'CFG，默认 1' },

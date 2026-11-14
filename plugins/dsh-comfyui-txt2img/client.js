@@ -24,10 +24,12 @@ window.__ModuleLoader__.load({
       ['3:4 (Portrait)', '3:4'],
       ['3:2 (Photo)', '3:2'],
       ['2:3 (Portrait Photo)', '2:3'],
+      ['21:9 (Ultrawide)', '21:9'],
     ];
 
     const FORM_KEY = 'comfyui-txt2img.form.v2';
     const CFG_DEFAULTS = {
+      viewMode: 'single',
       aspectRatio: '1:1 (Square)',
       megapixels: 1,
       batchSize: 1,
@@ -252,6 +254,7 @@ window.__ModuleLoader__.load({
       const [busy, setBusy] = React.useState('');
       const [error, setError] = React.useState('');
       const [polishing, setPolishing] = React.useState(false);
+      const [prevLora, setPrevLora] = React.useState(null);
       const [prevForm, setPrevForm] = React.useState(null);
       const [viewer, setViewer] = React.useState(null);
       const [history, setHistory] = React.useState([]);
@@ -327,6 +330,33 @@ window.__ModuleLoader__.load({
       function resetModels() {
         try { window.localStorage.removeItem('comfyui-txt2img.models.v1'); } catch { /* 忽略 */ }
         setModelValues({});
+      }
+
+      function setViewMode(mode) {
+        setCfg(function (prev) {
+          if (mode === 'ortho4') {
+            // 四视图 = 固定 2×2 占位，交给 QuadView LoRA 最稳
+            setPrevLora({ enabled: prev.loraEnabled, name: prev.loraName, strength: prev.loraStrength });
+            const hasQuad = loras.some(function (l) { return l === 'QuadView_krea2_v1.safetensors'; });
+            return {
+              ...prev,
+              viewMode: mode,
+              aspectRatio: '1:1 (Square)',
+              megapixels: 2.0,
+              loraEnabled: hasQuad ? true : prev.loraEnabled,
+              loraName: hasQuad ? 'QuadView_krea2_v1.safetensors' : prev.loraName,
+              loraStrength: hasQuad ? 0.9 : prev.loraStrength,
+            };
+          }
+          const back = prevLora || {};
+          return {
+            ...prev,
+            viewMode: mode,
+            loraEnabled: back.enabled === undefined ? prev.loraEnabled : back.enabled,
+            loraName: back.name || prev.loraName,
+            loraStrength: back.strength === undefined ? prev.loraStrength : back.strength,
+          };
+        });
       }
 
       async function generate() {
@@ -476,7 +506,18 @@ window.__ModuleLoader__.load({
               onChange: function (e) { setCfg(function (prev) { return { ...prev, aspectRatio: e.target.value }; }); },
             }, ASPECTS.map(function (a) { return h('option', { key: a[0], value: a[0] }, a[1]); }))
           ),
-          num('像素(MP)', 'megapixels', 0.2, 2.0, 0.05),
+          num('像素(MP)', 'megapixels', 0.2, 6.0, 0.05),
+          h('label', { style: { display: 'flex', flexDirection: 'column', gap: '2px', fontSize: '12px' } },
+            '出图模式',
+            h('select', {
+              value: cfg.viewMode || 'single',
+              onChange: function (e) { setViewMode(e.target.value); },
+              style: { fontSize: '12px' },
+            },
+              h('option', { value: 'single' }, '单视图'),
+              h('option', { value: 'ortho4' }, '四视图转盘')
+            )
+          ),
           num('张数', 'batchSize', 1, 4, 1, '64px'),
           num('步数', 'steps', 4, 30, 1, '64px'),
           num('CFG', 'cfg', 1, 5, 0.1, '64px'),
@@ -557,6 +598,10 @@ window.__ModuleLoader__.load({
             : h('span', { style: { opacity: 0.5 } }, '（不追加；点「AI 润化」会生成并自动勾上）')
         ),
 
+        cfg.viewMode === 'ortho4'
+          ? h('div', { style: { fontSize: '11px', opacity: 0.55, marginTop: '6px' } },
+              '四视图 = 固定 2×2 占位：左上正面 / 右上左侧 / 左下背面 / 右下右侧。会自动挂 QuadView_krea2_v1（0.9）并把比例设成 1:1、2MP；切回单视图会还原你原来的 LoRA 设置。')
+          : null,
         error ? h('div', { style: { color: '#e05c5c', fontSize: '13px', marginTop: '10px' } }, error) : null,
         busy ? h('div', { style: { opacity: 0.7, fontSize: '12px', marginTop: '8px' } }, busy) : null,
 
