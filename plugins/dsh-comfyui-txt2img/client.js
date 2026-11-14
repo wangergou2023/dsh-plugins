@@ -29,7 +29,6 @@ window.__ModuleLoader__.load({
 
     const FORM_KEY = 'comfyui-txt2img.form.v2';
     const CFG_DEFAULTS = {
-      viewMode: 'single',
       aspectRatio: '1:1 (Square)',
       megapixels: 1,
       batchSize: 1,
@@ -254,7 +253,6 @@ window.__ModuleLoader__.load({
       const [busy, setBusy] = React.useState('');
       const [error, setError] = React.useState('');
       const [polishing, setPolishing] = React.useState(false);
-      const [prevLora, setPrevLora] = React.useState(null);
       const [prevForm, setPrevForm] = React.useState(null);
       const [viewer, setViewer] = React.useState(null);
       const [history, setHistory] = React.useState([]);
@@ -332,61 +330,6 @@ window.__ModuleLoader__.load({
         setModelValues({});
       }
 
-      function setViewMode(mode) {
-        setCfg(function (prev) {
-          if (mode === 'ortho4') {
-            // 四视图 = 固定 2×2 占位，交给 QuadView LoRA 最稳
-            setPrevLora({
-              enabled: prev.loraEnabled, name: prev.loraName, strength: prev.loraStrength,
-              suffixEnabled: prev.suffixEnabled, styleSuffix: prev.styleSuffix, expand: prev.expand,
-            });
-            return {
-              ...prev,
-              viewMode: mode,
-              aspectRatio: '1:1 (Square)',
-              megapixels: 2.0,
-              // 转盘图要平光纯色底，摄影风格后缀会毁掉它；扩写也会重写版式说明
-              suffixEnabled: false,
-              expand: false,
-            };
-          }
-          const back = prevLora || {};
-          return {
-            ...prev,
-            viewMode: mode,
-            loraEnabled: back.enabled === undefined ? prev.loraEnabled : back.enabled,
-            loraName: back.name || prev.loraName,
-            loraStrength: back.strength === undefined ? prev.loraStrength : back.strength,
-            suffixEnabled: back.suffixEnabled === undefined ? prev.suffixEnabled : back.suffixEnabled,
-            styleSuffix: back.styleSuffix === undefined ? prev.styleSuffix : back.styleSuffix,
-            expand: back.expand === undefined ? prev.expand : back.expand,
-          };
-        });
-      }
-
-      /** 把「单视图模式下残留的四视图配置」清掉。 */
-      function fixToSingle() {
-        const cleaned = String(prompt)
-          .replace(/[，,。;；]?\s*(采用)?四视图布局[:：][^，,。;；]*/g, '')
-          .replace(/[，,。;；]?\s*四视图[^，,。;；]*/g, '')
-          .replace(/[，,。;；]?\s*四分之三视角[^，,。;；]*/g, '')
-          .replace(/[，,。;；]?\s*2\s*[x×]\s*2[^，,。;；]*/g, '')
-          .replace(/\s{2,}/g, '，')
-          .replace(/^[，,。;；\s]+|[，,。;；\s]+$/g, '')
-          .trim();
-        setPrompt(cleaned || '一个金属质感的机器人，全身正面站姿，纯色背景，平光，正交视角');
-        setCfg(function (prev) {
-          return {
-            ...prev,
-            viewMode: 'single',
-            loraEnabled: false,
-            suffixEnabled: false,
-            expand: false,
-            styleSuffix: /四视图|四分之三|2x2|2×2/.test(String(prev.styleSuffix || '')) ? '' : prev.styleSuffix,
-          };
-        });
-      }
-
       async function generate() {
         setError('');
         if (!prompt.trim()) { setError('先写提示词'); return; }
@@ -417,7 +360,7 @@ window.__ModuleLoader__.load({
           const data = await api('/api/comfyui-txt2img/polish', {
             method: 'POST',
             headers: { 'content-type': 'application/json' },
-            body: JSON.stringify({ prompt: prompt, loraName: cfg.loraEnabled ? cfg.loraName : '', viewMode: cfg.viewMode || 'single' }),
+            body: JSON.stringify({ prompt: prompt, loraName: cfg.loraEnabled ? cfg.loraName : '' }),
           });
           setPrevForm({ prompt: prompt, styleSuffix: cfg.styleSuffix, suffixEnabled: cfg.suffixEnabled });
           setPrompt(data.prompt || prompt);
@@ -535,17 +478,6 @@ window.__ModuleLoader__.load({
             }, ASPECTS.map(function (a) { return h('option', { key: a[0], value: a[0] }, a[1]); }))
           ),
           num('像素(MP)', 'megapixels', 0.2, 6.0, 0.05),
-          h('label', { style: { display: 'flex', flexDirection: 'column', gap: '2px', fontSize: '12px' } },
-            '出图模式',
-            h('select', {
-              value: cfg.viewMode || 'single',
-              onChange: function (e) { setViewMode(e.target.value); },
-              style: { fontSize: '12px' },
-            },
-              h('option', { value: 'single' }, '单视图'),
-              h('option', { value: 'ortho4' }, '四视图转盘')
-            )
-          ),
           num('张数', 'batchSize', 1, 4, 1, '64px'),
           num('步数', 'steps', 4, 30, 1, '64px'),
           num('CFG', 'cfg', 1, 5, 0.1, '64px'),
@@ -626,25 +558,6 @@ window.__ModuleLoader__.load({
             : h('span', { style: { opacity: 0.5 } }, '（不追加；点「AI 润化」会生成并自动勾上）')
         ),
 
-        (cfg.viewMode !== 'ortho4' && /turnaround|four view|four views|2x2|四视图|四格/i.test(prompt))
-          ? h('div', { style: { fontSize: '11px', color: '#e0a24a', marginTop: '6px', display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap' } },
-              h('span', null, '提示：提示词/LoRA/后缀里还有四视图的内容，但模式是「单视图」。'),
-              h('button', {
-                className: 'cfl-chip', style: { fontSize: '11px' },
-                onClick: fixToSingle,
-                title: '清掉提示词里的四视图描述、关掉 QuadView LoRA 与风格后缀',
-              }, '一键改回单视图'),
-              h('button', {
-                className: 'cfl-chip', style: { fontSize: '11px' },
-                onClick: function () { setViewMode('ortho4'); },
-                title: '改成 2×2 四视图模式',
-              }, '改成四视图模式')
-            )
-          : null,
-        cfg.viewMode === 'ortho4'
-          ? h('div', { style: { fontSize: '11px', opacity: 0.55, marginTop: '6px' } },
-              '四视图 = 固定 2×2 占位：左上正面 / 右上左侧 / 左下背面 / 右下右侧；自动 1:1、2MP，并关掉风格后缀与 AI 扩写（它们会破坏版式）。注意：QuadView LoRA 的两个侧面其实是同一侧，要真正相反的左右请改用「图片编辑」的 🎭 四视图。')
-          : null,
         error ? h('div', { style: { color: '#e05c5c', fontSize: '13px', marginTop: '10px' } }, error) : null,
         busy ? h('div', { style: { opacity: 0.7, fontSize: '12px', marginTop: '8px' } }, busy) : null,
 
@@ -655,8 +568,9 @@ window.__ModuleLoader__.load({
                   job.id + ' · ' + job.status
                   + (job.elapsedSeconds ? ' · ' + job.elapsedSeconds + 's' : '')
                   + (job.summary && job.summary.seed !== undefined ? ' · 种子 ' + job.summary.seed : '')
-                  + (job.count ? ' · ' + job.count + ' 张' : '')),
-                              ),
+                  + (job.count ? ' · ' + job.count + ' 张' : '')
+                )
+              ),
               job.error ? h('div', { style: { color: '#e05c5c', fontSize: '12px', marginBottom: '8px' } }, job.error) : null,
               job.expanded
                 ? h('details', { style: { fontSize: '12px', marginBottom: '10px' } },

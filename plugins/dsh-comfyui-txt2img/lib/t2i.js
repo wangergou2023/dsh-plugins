@@ -44,35 +44,16 @@ export async function buildPrompt(opts = {}) {
   const prompt = JSON.parse(JSON.stringify(spec.template));
   const knobs = spec.slots.knobs;
 
-  const viewMode = String(opts.viewMode || 'single') === 'ortho4' ? 'ortho4' : 'single';
-  const rawText = String(opts.prompt || '').trim();
-  if (!rawText) throw new Error('prompt 不能为空');
-
-  // 四视图：套一层版式指令，用户只写角色本身
-  const layoutSuffix = '\n\nLAYOUT (must follow exactly): one single image split into 2 rows and 2 columns = '
-    + 'exactly 4 panels total, one whole figure per panel, nothing in between. '
-    + 'Top-left = front view, top-right = left profile, bottom-left = back view, bottom-right = right profile. '
-    + 'Full body head to toe in every panel, identical design and colors across all four, '
-    + 'neutral A-pose, orthographic camera, seamless pure black background, flat even lighting. '
-    + 'Do not draw a fifth figure. No character sheet borders, no text, no watermark.';
-  const text = viewMode === 'ortho4'
-    ? rawText.replace(/\s+/g, ' ').trim() + layoutSuffix
-    : rawText;
+  const text = String(opts.prompt || '').trim();
+  if (!text) throw new Error('prompt 不能为空');
   prompt[knobs.prompt.node].inputs[knobs.prompt.input] = text;
 
-  // 四视图默认用 21:9 宽幅；用户显式给了别的比例/像素就不覆盖
-  const aspectDefault = viewMode === 'ortho4'
-    ? '1:1 (Square)'
-    : knobs.aspectRatio.options[0];
-  const aspect = String(opts.aspectRatio || aspectDefault);
+  const aspect = String(opts.aspectRatio || knobs.aspectRatio.options[0]);
   if (!knobs.aspectRatio.options.includes(aspect)) throw new Error(`aspectRatio 不在可选范围内：${aspect}`);
   prompt[knobs.aspectRatio.node].inputs[knobs.aspectRatio.input] = aspect;
 
-  const mpxFallback = viewMode === 'ortho4'
-    ? Math.min(knobs.megapixels.max, 2.0)
-    : knobs.megapixels.default;
   prompt[knobs.megapixels.node].inputs[knobs.megapixels.input] =
-    clamp(opts.megapixels, knobs.megapixels.min, knobs.megapixels.max, mpxFallback);
+    clamp(opts.megapixels, knobs.megapixels.min, knobs.megapixels.max, knobs.megapixels.default);
 
   prompt[knobs.batchSize.node].inputs[knobs.batchSize.input] =
     Math.round(clamp(opts.batchSize, knobs.batchSize.min, knobs.batchSize.max, knobs.batchSize.default));
@@ -90,15 +71,12 @@ export async function buildPrompt(opts = {}) {
   const seed = Number.isFinite(parsedSeed) ? Math.trunc(parsedSeed) : Math.floor(Math.random() * 2 ** 48);
   prompt[knobs.seed.node].inputs[knobs.seed.input] = seed;
 
-  // 四视图：扩写会重写掉版式约束，强制关闭
-  prompt[knobs.expand.node].inputs[knobs.expand.input] =
-    viewMode === 'ortho4' ? false : opts.expand !== false;
+  prompt[knobs.expand.node].inputs[knobs.expand.input] = opts.expand !== false;
 
   // LoRA 与风格后缀已解耦；旧的 style 单开关仍然兼容（等同两个都开）
   const legacy = opts.style === true;
   prompt[knobs.loraEnabled.node].inputs[knobs.loraEnabled.input] = opts.loraEnabled === true || legacy;
-  prompt[knobs.suffixEnabled.node].inputs[knobs.suffixEnabled.input] =
-    viewMode === 'ortho4' ? false : (opts.suffixEnabled === true || legacy);
+  prompt[knobs.suffixEnabled.node].inputs[knobs.suffixEnabled.input] = opts.suffixEnabled === true || legacy;
 
   const loraName = String(opts.loraName || knobs.loraName.default);
   const live = await availableLoras(opts.host);
@@ -119,7 +97,6 @@ export async function buildPrompt(opts = {}) {
     clamp(opts.loraStrength, knobs.loraStrength.min, knobs.loraStrength.max, knobs.loraStrength.default);
 
   const summary = {
-    viewMode,
     prompt: text,
     aspectRatio: aspect,
     megapixels: prompt[knobs.megapixels.node].inputs[knobs.megapixels.input],
