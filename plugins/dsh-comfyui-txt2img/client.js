@@ -329,6 +329,19 @@ window.__ModuleLoader__.load({
         setModelValues({});
       }
 
+      function applyTurnaroundPreset() {
+        setPrompt('character turnaround sheet, the same character shown in four separate views arranged in a 2x2 grid: top-left front view, top-right left side view, bottom-left back view, bottom-right right side view, full body, standing, neutral A-pose, consistent proportions, consistent costume and colors across all four views, plain light gray background, soft even studio lighting, no text, no watermark');
+        setCfg(function (prev) {
+          return {
+            ...prev,
+            loraEnabled: true,
+            loraName: 'QuadView_krea2_v1.safetensors',
+            loraStrength: 0.9,
+            aspectRatio: '1:1 (Square)',
+          };
+        });
+      }
+
       async function generate() {
         setError('');
         if (!prompt.trim()) { setError('先写提示词'); return; }
@@ -501,6 +514,11 @@ window.__ModuleLoader__.load({
             }),
             'AI 扩写'
           ),
+          h('button', {
+            className: 'cfl-chip', onClick: applyTurnaroundPreset,
+            title: '套用四视图转盘预设：QuadView LoRA + 2×2 四视图提示词',
+            style: { fontSize: '12px' },
+          }, '🎭 四视图转盘'),
           h('button', {
             className: 'cfl-chip', onClick: generate, disabled: busy !== '' || active,
             style: { fontWeight: 600 },

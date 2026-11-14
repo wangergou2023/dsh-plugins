@@ -1,0 +1,137 @@
+{
+  "name": "pixal3d_single",
+  "workflow": "pixal3d_single.api.json",
+  "note": "Pixal3D 单图转 3D：一张角色图 → 抠图 → 单视图条件（FOV 20）→ Trellis2 形状与贴图 → GLB。不需要四视图转盘图。",
+  "knobs": {
+    "image": {
+      "node": "364",
+      "input": "image",
+      "kind": "enum",
+      "required": true,
+      "label": "角色图"
+    },
+    "layout": {
+      "node": "324",
+      "input": "camera_angle_x",
+      "kind": "float",
+      "min": 10,
+      "max": 60,
+      "step": 1,
+      "default": 20,
+      "label": "相机 FOV",
+      "note": "单图模式的水平视场角；20 度偏长焦，越大越广"
+    },
+    "shapeSteps": {
+      "node": "18",
+      "input": "steps",
+      "kind": "int",
+      "min": 4,
+      "max": 60,
+      "default": 20,
+      "label": "形状步数"
+    },
+    "shapeCfg": {
+      "node": "18",
+      "input": "cfg",
+      "kind": "float",
+      "min": 1,
+      "max": 15,
+      "step": 0.5,
+      "default": 7.5,
+      "label": "形状 CFG"
+    },
+    "textureSteps": {
+      "node": "12",
+      "input": "steps",
+      "kind": "int",
+      "min": 4,
+      "max": 60,
+      "default": 12,
+      "label": "贴图步数"
+    },
+    "voxelSteps": {
+      "node": "3",
+      "input": "steps",
+      "kind": "int",
+      "min": 4,
+      "max": 60,
+      "default": 12,
+      "label": "体素步数"
+    },
+    "structureSteps": {
+      "node": "23",
+      "input": "steps",
+      "kind": "int",
+      "min": 4,
+      "max": 60,
+      "default": 12,
+      "label": "结构步数"
+    },
+    "seed": {
+      "node": "18",
+      "input": "seed",
+      "kind": "seed",
+      "label": "种子"
+    },
+    "resolution": {
+      "node": "94",
+      "input": "target_resolution",
+      "kind": "int",
+      "min": 512,
+      "max": 2048,
+      "step": 128,
+      "default": 1536,
+      "label": "上采样分辨率"
+    },
+    "remesh": {
+      "node": "241",
+      "input": "resolution",
+      "kind": "int",
+      "min": 128,
+      "max": 1536,
+      "step": 64,
+      "default": 768,
+      "label": "重网格分辨率"
+    },
+    "textureSize": {
+      "node": "288",
+      "input": "value",
+      "kind": "int",
+      "min": 512,
+      "max": 4096,
+      "step": 256,
+      "default": 4096,
+      "label": "贴图尺寸"
+    },
+    "threshold": {
+      "node": "4",
+      "input": "threshold",
+      "kind": "float",
+      "min": 0.1,
+      "max": 2,
+      "step": 0.05,
+      "default": 0.6,
+      "label": "体素阈值"
+    },
+    "filenamePrefix": {
+      "node": "372",
+      "input": "filename_prefix",
+      "kind": "string",
+      "default": "3d/pixal3d",
+      "label": "输出前缀"
+    }
+  },
+  "output": {
+    "saveNode": "372",
+    "class_type": "Save3DAdvanced",
+    "field": "3d",
+    "note": "从 /history 的 outputs['372']['3d'][0] 取 {filename, subfolder, type}，再走 /view 下载"
+  },
+  "previewNodes": [
+    "147",
+    "224",
+    "233",
+    "261"
+  ],
+  "notePreview": "147 是贴图烘焙预览，224 法线图，233 AO 图，261 UV atlas"
+}

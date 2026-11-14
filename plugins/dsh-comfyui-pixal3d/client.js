@@ -18,7 +18,9 @@ window.__ModuleLoader__.load({
 
     const FORM_KEY = 'comfyui-pixal3d.form.v1';
     const DEFAULTS = {
-      layout: 'quarters',
+      mode: 'single',
+      fov: 20,
+      layout: 'grid2x2',
       shapeSteps: 20,
       textureSteps: 12,
       resolution: 1536,
@@ -222,7 +224,7 @@ window.__ModuleLoader__.load({
 
         h('div', { style: { display: 'flex', gap: '14px', alignItems: 'flex-start', flexWrap: 'wrap', marginBottom: '10px' } },
           h('div', { style: { width: '300px' } },
-            h('div', { style: { fontSize: '12px', opacity: 0.65, marginBottom: '4px' } }, '四视图转盘图（前 / 左 / 后 / 右）'),
+            h('div', { style: { fontSize: '12px', opacity: 0.65, marginBottom: '4px' } }, form.mode === 'single' ? '角色图（正面 / 半身，背景干净最佳）' : '四视图转盘图（前 / 左 / 后 / 右）'),
             imgSrc
               ? h('img', {
                   src: imgSrc, alt: image, onClick: function () { setViewer(imgSrc); },
@@ -256,16 +258,30 @@ window.__ModuleLoader__.load({
           h('div', { style: { flex: '1 1 380px', minWidth: '320px' } },
             h('div', { style: { display: 'flex', flexWrap: 'wrap', gap: '12px', alignItems: 'flex-end' } },
               h('label', { style: { display: 'flex', flexDirection: 'column', gap: '2px', fontSize: '12px' } },
-                '切分方式',
+                '输入模式',
                 h('select', {
-                  value: form.layout,
-                  onChange: function (e) { set('layout', e.target.value); },
+                  value: form.mode,
+                  onChange: function (e) { set('mode', e.target.value); },
                   style: { fontSize: '12px' },
                 },
-                  h('option', { value: 'quarters' }, '按宽度四等分'),
-                  h('option', { value: 'template' }, '模板坐标')
+                  h('option', { value: 'single' }, '单图直出'),
+                  h('option', { value: 'sheet' }, '四视图转盘')
                 )
               ),
+              form.mode === 'sheet'
+                ? h('label', { style: { display: 'flex', flexDirection: 'column', gap: '2px', fontSize: '12px' } },
+                    '切分方式',
+                    h('select', {
+                      value: form.layout,
+                      onChange: function (e) { set('layout', e.target.value); },
+                      style: { fontSize: '12px' },
+                    },
+                      h('option', { value: 'grid2x2' }, '2×2 四宫格'),
+                      h('option', { value: 'quarters' }, '四联排（按宽度四等分）'),
+                      h('option', { value: 'template' }, '模板坐标')
+                    )
+                  )
+                : num('相机 FOV', 'fov', 10, 60, 1, '68px'),
               num('形状步数', 'shapeSteps', 4, 60, 1, '70px'),
               num('贴图步数', 'textureSteps', 4, 60, 1, '70px'),
               num('上采样', 'resolution', 512, 2048, 128, '82px'),
@@ -289,7 +305,9 @@ window.__ModuleLoader__.load({
               }, active ? '生成中…' : '生成 3D')
             ),
             h('div', { style: { fontSize: '11px', opacity: 0.5, marginTop: '6px' } },
-              '四视图顺序：前 / 左 / 后 / 右。等分模式按图片宽度平均切四刀；模板模式沿用工作流里写死的坐标。'),
+              form.mode === 'single'
+                ? '单图直出：一张角色图即可，不用转盘图。FOV 越小越接近长焦（人脸更平），越大越广。'
+                : '顺序：前 / 左 / 后 / 右。四宫格按 2×2 切（左上/右上/左下/右下）；四联排按宽度切；模板沿用工作流坐标。'),
             error ? h('div', { style: { color: '#e05c5c', fontSize: '13px', marginTop: '10px' } }, error) : null,
             busy ? h('div', { style: { opacity: 0.7, fontSize: '12px', marginTop: '8px' } }, busy) : null
           )

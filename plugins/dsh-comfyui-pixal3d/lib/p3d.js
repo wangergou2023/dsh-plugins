@@ -10,9 +10,14 @@ const HERE = path.dirname(fileURLToPath(import.meta.url));
 const WORKFLOW_DIR = path.join(HERE, '..', 'workflows');
 const MAX_JOBS = 40;
 
-export async function loadSpec() {
-  const template = JSON.parse(await fs.readFile(path.join(WORKFLOW_DIR, 'pixal3d_multiview.api.json'), 'utf8'));
-  const slots = JSON.parse(await fs.readFile(path.join(WORKFLOW_DIR, 'pixal3d_multiview.slots.json'), 'utf8'));
+export function normalizeMode(value) {
+  return String(value || '') === 'single' ? 'single' : 'sheet';
+}
+
+export async function loadSpec(mode = 'sheet') {
+  const base = normalizeMode(mode) === 'single' ? 'pixal3d_single' : 'pixal3d_multiview';
+  const template = JSON.parse(await fs.readFile(path.join(WORKFLOW_DIR, base + '.api.json'), 'utf8'));
+  const slots = JSON.parse(await fs.readFile(path.join(WORKFLOW_DIR, base + '.slots.json'), 'utf8'));
   return { template, slots };
 }
 
@@ -68,24 +73,42 @@ export async function fetchImageSize(client, name) {
 }
 
 export async function buildPrompt(opts = {}, client) {
-  const spec = await loadSpec();
+  const mode = normalizeMode(opts.mode);
+  const spec = await loadSpec(mode);
   const prompt = JSON.parse(JSON.stringify(spec.template));
   const knobs = spec.slots.knobs;
 
   const image = String(opts.image || '').trim();
-  if (!image) throw new Error('还没有四视图图：先上传一张，或从 output 里选一张');
+  if (!image) throw new Error(mode === 'single' ? '还没有角色图：先上传一张' : '还没有四视图图：先上传一张');
   prompt[knobs.image.node].inputs[knobs.image.input] = image;
 
-  // 四视图切分
-  const layout = String(opts.layout || knobs.layout.default);
-  if (layout === 'quarters' && client) {
-    const size = await fetchImageSize(client, image);
-    if (size && size.width > 0) {
-      const w = Math.floor(size.width / 4);
-      spec.slots.cropNodes.forEach((nodeId, i) => {
-        prompt[nodeId].inputs.crop_region = { x: i * w, y: 0, width: w, height: size.height };
-      });
+  if (mode === 'sheet') {
+    // 四视图切分
+    const layout = String(opts.layout || knobs.layout.default);
+    if ((layout === 'quarters' || layout === 'grid2x2') && client) {
+      const size = await fetchImageSize(client, image);
+      if (size && size.width > 0) {
+        spec.slots.cropNodes.forEach((nodeId, i) => {
+          if (layout === 'quarters') {
+            const w = Math.floor(size.width / 4);
+            prompt[nodeId].inputs.crop_region = { x: i * w, y: 0, width: w, height: size.height };
+          } else {
+            const w = Math.floor(size.width / 2);
+            const h = Math.floor(size.height / 2);
+            prompt[nodeId].inputs.crop_region = {
+              x: (i % 2) * w,
+              y: Math.floor(i / 2) * h,
+              width: w,
+              height: h,
+            };
+          }
+        });
+      }
     }
+  } else {
+    // 单图：相机 FOV
+    const k = knobs.layout;
+    prompt[k.node].inputs[k.input] = clamp(opts.fov, k.min, k.max, k.default);
   }
 
   const rawSeed = opts.seed;
@@ -120,8 +143,9 @@ export async function buildPrompt(opts = {}, client) {
   return {
     prompt,
     summary: {
+      mode,
       image,
-      layout,
+      layout: mode === 'sheet' ? String(opts.layout || 'quarters') : 'single',
       seed,
       shapeSteps: prompt['18'].inputs.steps,
       textureSteps: prompt['12'].inputs.steps,
@@ -158,7 +182,7 @@ export async function run(client, opts = {}, hooks = {}) {
   const entry = await client.wait(promptId, opts.timeoutMs || 3600000, (seconds) => {
     if (hooks.onTick) hooks.onTick(seconds, promptId);
   });
-  const model = await fetchModel(client, entry, (await loadSpec()).slots.output.saveNode);
+  const model = await fetchModel(client, entry, '372');
   return { model, promptId, summary };
 }
 

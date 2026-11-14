@@ -143,8 +143,10 @@ export function apply(ctx) {
     parameters: {
       type: 'object',
       properties: {
-        image: { type: 'string', description: '四视图转盘图：input 里的文件名或本机绝对路径' },
-        layout: { type: 'string', enum: ['quarters', 'template'], description: 'quarters=按宽度四等分（默认）；template=用工作流里写死的裁剪坐标' },
+        image: { type: 'string', description: '角色图（单图模式）或四视图转盘图（sheet 模式）：input 里的文件名或本机绝对路径' },
+        mode: { type: 'string', enum: ['single', 'sheet'], description: 'single=一张图直接出 3D（默认推荐）；sheet=四视图转盘图' },
+        layout: { type: 'string', enum: ['quarters', 'template'], description: 'sheet 模式下的切分方式：quarters 四等分 / template 模板坐标' },
+        fov: { type: 'number', description: 'single 模式的相机水平 FOV，默认 20' },
         shapeSteps: { type: 'number', description: '形状采样步数，默认 20' },
         textureSteps: { type: 'number', description: '贴图采样步数，默认 12' },
         seed: { type: 'number', description: '种子；不传则随机（四个采样器共用）' },
