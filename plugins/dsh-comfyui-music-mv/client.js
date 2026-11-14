@@ -30,8 +30,8 @@ window.__ModuleLoader__.load({
     ];
 
     const STAGES = [
+      ['plan', '剧本'],
       ['song', '出歌'],
-      ['plan', '排分镜'],
       ['hero', '定妆图'],
       ['render', '渲染镜头'],
       ['stitch', '拼接压曲'],

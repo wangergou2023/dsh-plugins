@@ -241,8 +241,11 @@ export async function buildShotPrompt(plan, shot, options = {}) {
 /**
  * 成品拼接：N 段视频按顺序接起来，音轨换成整首歌。
  * complete_audio 会覆盖每段自带的音频——镜头里模型自己生成的声音全部丢掉。
+ *
+ * trimSeconds：H3 的帧数按 17n+5 对齐，7.5 秒会变成 8 秒，几段下来成片比歌长；
+ * 给这个参数就用 Video Slice 把成片裁到和歌一样长，避免结尾 1 秒静音。
  */
-export function buildStitchPrompt({ clips, audio, filenamePrefix = 'video/MV' }) {
+export function buildStitchPrompt({ clips, audio, filenamePrefix = 'video/MV', trimSeconds = 0 }) {
   const names = (clips || []).map((c) => String(c || '').trim()).filter(Boolean);
   if (names.length === 0) throw new Error('没有可拼接的镜头');
   if (names.length > LIMITS.maxShots) throw new Error(`一次最多拼 ${LIMITS.maxShots} 段`);
@@ -264,9 +267,20 @@ export function buildStitchPrompt({ clips, audio, filenamePrefix = 'video/MV' })
   concatInputs.complete_audio = ['2000', 0];
 
   prompt['2001'] = { class_type: 'ConcatenateVideo', inputs: concatInputs };
+
+  let tail = ['2001', 0];
+  const trim = Number(trimSeconds);
+  if (Number.isFinite(trim) && trim > 0.5) {
+    prompt['2003'] = {
+      class_type: 'Video Slice',
+      inputs: { video: ['2001', 0], start_time: 0, duration: trim, strict_duration: false },
+    };
+    tail = ['2003', 0];
+  }
+
   prompt['2002'] = {
     class_type: 'SaveVideo',
-    inputs: { video: ['2001', 0], filename_prefix: filenamePrefix, format: 'mp4' },
+    inputs: { video: tail, filename_prefix: filenamePrefix, format: 'mp4' },
   };
   return prompt;
 }

@@ -327,7 +327,26 @@ async function execute(job, params) {
   const total = () => (job.shots || []).length;
 
   /* 1. 歌 */
-  await jobPatch(job.id, { stage: 'song', stageLabel: '生成歌曲', error: null });
+  /* 1. 剧本（先有曲风和歌词，才能出歌） */
+  await jobPatch(job.id, { stage: 'plan', stageLabel: '写剧本', error: null });
+  let plan;
+  if (params.plan && typeof params.plan === 'object') {
+    plan = normalizePlan(params.plan, { duration: params.duration, shotCount: params.shotCount });
+  } else {
+    // 注意：ctx 不能塞进 params —— 任务会被写成 json，ctx 是循环引用。
+    const generated = await generatePlan(hostCtx, {
+      theme: params.theme,
+      style: params.style,
+      lyrics: params.lyrics,
+      duration: params.duration,
+      shotCount: params.shotCount,
+    });
+    plan = generated.plan;
+  }
+  await jobPatch(job.id, { plan });
+
+  /* 2. 歌 */
+  await jobPatch(job.id, { stage: 'song', stageLabel: '生成歌曲' });
   let songName;
   let songBuffer;
   let songFileName;
@@ -350,9 +369,9 @@ async function execute(job, params) {
     songInfo = audioDuration(songBuffer, songFileName);
   } else {
     const built = await buildSongPrompt({
-      style: params.style,
-      lyrics: params.lyrics,
-      duration: params.duration,
+      style: plan.style || params.style,
+      lyrics: plan.lyrics || params.lyrics,
+      duration: plan.duration || params.duration,
       format: 'flac',
       steps: params.songSteps,
       seed: params.songSeed,
@@ -373,26 +392,11 @@ async function execute(job, params) {
   const songDuration = Number(params.songSeconds) || songInfo.duration;
   const savedSong = await saveAudio(DATA_DIR, job.id, { buffer: songBuffer, filename: songFileName || 'song.flac' });
   await jobPatch(job.id, {
-    stage: 'plan',
-    stageLabel: '排分镜',
     song: { file: savedSong, name: songName, duration: songDuration, estimated: !!songInfo.estimated },
   });
 
-  /* 2. 分镜表 */
-  let plan;
-  if (params.plan && typeof params.plan === 'object') {
-    plan = normalizePlan(params.plan, { duration: songDuration, shotCount: params.shotCount });
-  } else {
-    // 注意：ctx 不能塞进 params —— 任务会被写成 json，ctx 是循环引用。
-    const generated = await generatePlan(hostCtx, {
-      theme: params.theme,
-      style: params.style,
-      lyrics: params.lyrics,
-      duration: songDuration,
-      shotCount: params.shotCount,
-    });
-    plan = generated.plan;
-  }
+  /* 3. 按真实歌长重排时间轴：歌是 YuE2 生成的，实际长度和请求值不一定一样 */
+  plan = normalizePlan(plan, { duration: songDuration, shotCount: params.shotCount });
   const shots = plan.shots.map((shot) => ({
     index: shot.index, label: shot.label, prompt: shot.prompt,
     start: shot.start, end: shot.end, seconds: shot.seconds,
@@ -400,7 +404,7 @@ async function execute(job, params) {
   }));
   await jobPatch(job.id, { plan, shots, total: shots.length });
 
-  /* 3. 主角定妆图 */
+  /* 4. 主角定妆图 */
   await jobPatch(job.id, { stage: 'hero', stageLabel: '生成主角定妆图' });
   let heroImage = null;
   if (params.heroImage) {
@@ -479,6 +483,7 @@ async function execute(job, params) {
     clips,
     audio: songName,
     filenamePrefix: 'video/MV_' + job.id,
+    trimSeconds: songDuration,
   });
   const promptId = await client.submit(graph);
   const entry = await client.wait(promptId, 1800000);
@@ -554,8 +559,8 @@ export function apply(ctx) {
       aspects: ASPECTS,
       defaults: { duration: 60, aspectRatio: '16:9 (Widescreen)', megapixels: 0.4, shotSeconds: 8, songFormat: 'flac' },
       stages: [
+        { key: 'plan', label: '写剧本' },
         { key: 'song', label: '生成歌曲' },
-        { key: 'plan', label: '排分镜' },
         { key: 'hero', label: '定妆图' },
         { key: 'render', label: '渲染镜头' },
         { key: 'stitch', label: '拼接压曲' },
@@ -688,6 +693,7 @@ export function apply(ctx) {
         clips: { type: 'array', items: { type: 'string' }, description: '视频片段：ComfyUI input 里的文件名或本机绝对路径' },
         audio: { type: 'string', description: '整首歌：ComfyUI input 里的文件名或本机绝对路径' },
         filenamePrefix: { type: 'string', description: '输出文件名前缀，默认 video/MV' },
+        trimSeconds: { type: 'number', description: '把成片裁到这个秒数（通常等于歌长）；不填就不裁' },
         host: { type: 'string', description: 'ComfyUI 地址' },
       },
       required: ['clips', 'audio'],
@@ -703,7 +709,7 @@ export function apply(ctx) {
       }
       const audio = await ensureComfyFile(client, args.audio, 'audio');
       if (clips.length === 0 || !audio) throw new Error('clips 和 audio 都不能为空');
-      const graph = buildStitchPrompt({ clips, audio, filenamePrefix: args.filenamePrefix || 'video/MV' });
+      const graph = buildStitchPrompt({ clips, audio, filenamePrefix: args.filenamePrefix || 'video/MV', trimSeconds: args.trimSeconds });
       const promptId = await client.submit(graph);
       const entry = await client.wait(promptId, 1800000);
       const { buffer } = await fetchVideo(client, entry);
