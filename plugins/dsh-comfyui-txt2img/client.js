@@ -417,7 +417,7 @@ window.__ModuleLoader__.load({
           const data = await api('/api/comfyui-txt2img/polish', {
             method: 'POST',
             headers: { 'content-type': 'application/json' },
-            body: JSON.stringify({ prompt: prompt, loraName: cfg.loraEnabled ? cfg.loraName : '' }),
+            body: JSON.stringify({ prompt: prompt, loraName: cfg.loraEnabled ? cfg.loraName : '', viewMode: cfg.viewMode || 'single' }),
           });
           setPrevForm({ prompt: prompt, styleSuffix: cfg.styleSuffix, suffixEnabled: cfg.suffixEnabled });
           setPrompt(data.prompt || prompt);

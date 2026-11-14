@@ -301,6 +301,10 @@ export function apply(ctx) {
           if (current && typeof current.provider === 'string' && typeof current.model === 'string') selection = current;
         } catch { /* 走默认 */ }
 
+        const viewMode = String((body && body.viewMode) || 'single') === 'ortho4' ? 'ortho4' : 'single';
+        const modeRule = viewMode === 'ortho4'
+          ? '- 用户在做「四视图转盘」：你只负责描写角色本身（造型、材质、配色、姿态、气质）。四格版式、视角、全身构图、纯色背景、平光都由程序统一添加，你不要写视角/版式/景别/镜头/景深/背景。'
+          : '- 用户要的是一个独立画面：只描述一个视角下的完整画面，不要写任何版式、拼图或多视角描述。';
         const loraRaw = String((body && body.loraName) || '');
         // 版式类 LoRA（QuadView 之类）的名字会把模型带偏去写「四视图」，直接不外传
         const layoutLora = /quad\s*view|turnaround|multi.?view|4\s*view|three.?view/i.test(loraRaw);
@@ -323,9 +327,12 @@ export function apply(ctx) {
           '- 保持用户原始语言；不要编造用户没提的主体。',
           '- 长度控制在原文的 1–2 倍，不要无限扩写。',
           '',
-          '绝对禁止：',
-          '- 不要写「四视图 / 三视图 / 多视角 / 四分之三视角 / 角色设定图 / 分屏 / 并排展示 / 2x2」等版式或构图方式；只描述一个画面。',
-          '- [SUFFIX] 只写材质、光线、画风、镜头质感，不要写视角或版式。',
+          '本模式的规则：',
+          modeRule,
+          viewMode === 'ortho4'
+            ? '- [SUFFIX] 四视图模式下只写材质、配色、光线、画风；不要写景别、镜头、景深、虚化。'
+            : '- [SUFFIX] 只写材质、光线、画风、镜头质感，不要写视角或版式。',
+          '- 绝对不要出现「四视图 / 三视图 / 多视角 / 四分之三视角 / 角色设定图 / 分屏 / 并排展示 / 2x2」。',
         ].join('\n');
         const user = `所选 LoRA：${loraName || '（无）'}\n\n原始描述：\n${raw}`;
 
@@ -381,6 +388,7 @@ export function apply(ctx) {
             prompt: stripLayout(parsed.prompt) || raw,
             suffix: stripLayout(parsed.suffix),
             model: selection ? selection.model : 'default',
+            viewMode,
           });
         } catch (error) {
           sendJson(response, 502, { error: 'llm_failed', message: String((error && error.message) || error) });
