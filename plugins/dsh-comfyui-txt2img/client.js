@@ -336,16 +336,18 @@ window.__ModuleLoader__.load({
         setCfg(function (prev) {
           if (mode === 'ortho4') {
             // 四视图 = 固定 2×2 占位，交给 QuadView LoRA 最稳
-            setPrevLora({ enabled: prev.loraEnabled, name: prev.loraName, strength: prev.loraStrength });
-            const hasQuad = loras.some(function (l) { return l === 'QuadView_krea2_v1.safetensors'; });
+            setPrevLora({
+              enabled: prev.loraEnabled, name: prev.loraName, strength: prev.loraStrength,
+              suffixEnabled: prev.suffixEnabled, styleSuffix: prev.styleSuffix, expand: prev.expand,
+            });
             return {
               ...prev,
               viewMode: mode,
               aspectRatio: '1:1 (Square)',
               megapixels: 2.0,
-              loraEnabled: hasQuad ? true : prev.loraEnabled,
-              loraName: hasQuad ? 'QuadView_krea2_v1.safetensors' : prev.loraName,
-              loraStrength: hasQuad ? 0.9 : prev.loraStrength,
+              // 转盘图要平光纯色底，摄影风格后缀会毁掉它；扩写也会重写版式说明
+              suffixEnabled: false,
+              expand: false,
             };
           }
           const back = prevLora || {};
@@ -355,6 +357,9 @@ window.__ModuleLoader__.load({
             loraEnabled: back.enabled === undefined ? prev.loraEnabled : back.enabled,
             loraName: back.name || prev.loraName,
             loraStrength: back.strength === undefined ? prev.loraStrength : back.strength,
+            suffixEnabled: back.suffixEnabled === undefined ? prev.suffixEnabled : back.suffixEnabled,
+            styleSuffix: back.styleSuffix === undefined ? prev.styleSuffix : back.styleSuffix,
+            expand: back.expand === undefined ? prev.expand : back.expand,
           };
         });
       }
@@ -598,9 +603,13 @@ window.__ModuleLoader__.load({
             : h('span', { style: { opacity: 0.5 } }, '（不追加；点「AI 润化」会生成并自动勾上）')
         ),
 
+        (cfg.viewMode !== 'ortho4' && /turnaround|four view|four views|2x2|四视图|四格/i.test(prompt))
+          ? h('div', { style: { fontSize: '11px', color: '#e0a24a', marginTop: '6px' } },
+              '提示：提示词看起来是四视图，但当前是「单视图」模式——不会自动套 2×2 版式，也不会挂 QuadView LoRA。要四格请把出图模式切过去。')
+          : null,
         cfg.viewMode === 'ortho4'
           ? h('div', { style: { fontSize: '11px', opacity: 0.55, marginTop: '6px' } },
-              '四视图 = 固定 2×2 占位：左上正面 / 右上左侧 / 左下背面 / 右下右侧。会自动挂 QuadView_krea2_v1（0.9）并把比例设成 1:1、2MP；切回单视图会还原你原来的 LoRA 设置。')
+              '四视图 = 固定 2×2 占位：左上正面 / 右上左侧 / 左下背面 / 右下右侧；自动 1:1、2MP，并关掉风格后缀与 AI 扩写（它们会破坏版式）。注意：QuadView LoRA 的两个侧面其实是同一侧，要真正相反的左右请改用「图片编辑」的 🎭 四视图。')
           : null,
         error ? h('div', { style: { color: '#e05c5c', fontSize: '13px', marginTop: '10px' } }, error) : null,
         busy ? h('div', { style: { opacity: 0.7, fontSize: '12px', marginTop: '8px' } }, busy) : null,

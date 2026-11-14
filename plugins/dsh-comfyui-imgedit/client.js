@@ -486,6 +486,11 @@ window.__ModuleLoader__.load({
         });
       }
 
+      function applyTurnaroundPreset() {
+        setPrevPrompt(prompt);
+        setPrompt('把这张图里的角色做成角色四视图转盘：2x2 网格，左上正面全身、右上左侧面、左下背面、右下右侧面，同一个角色的造型、配色、比例和材质在四格中保持一致，纯浅灰背景，全身站姿，正交视角无透视，无文字无水印');
+      }
+
       async function generate() {
         setError('');
         if (!refs.filter(function (x) { return x && x.trim(); }).length) { setError('至少传一张图'); return; }
@@ -598,6 +603,12 @@ window.__ModuleLoader__.load({
         h('div', { style: { display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap', marginBottom: '4px' } },
           h('span', { style: { fontSize: '12px', opacity: 0.65 } },
             '编辑指令：说清每张图提供什么、成品要什么样，例如「用第 2 张的女生、第 3 张的电竞房场景合成一张画面」；输出比例跟随第 1 张图'),
+          h('button', {
+            className: 'cfl-chip',
+            title: '一键套用四视图转盘提示词（2×2：正/左/背/右）',
+            onClick: applyTurnaroundPreset,
+            style: { fontSize: '12px' },
+          }, '🎭 四视图'),
           h('button', {
             className: 'cfl-chip',
             disabled: polishing,
