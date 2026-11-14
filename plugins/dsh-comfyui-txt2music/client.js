@@ -73,7 +73,6 @@ window.__ModuleLoader__.load({
       const [theme, setTheme] = React.useState('');
       const [writing, setWriting] = React.useState(false);
       const [prevLyrics, setPrevLyrics] = React.useState('');
-      const [lyricsMode, setLyricsMode] = React.useState('polish');
 
       React.useEffect(function () {
         try { window.localStorage.setItem(FORM_KEY, JSON.stringify(form)); } catch { /* 忽略 */ }
@@ -172,30 +171,6 @@ window.__ModuleLoader__.load({
         }
       }
 
-      async function polishLyrics() {
-        setError('');
-        if (!String(form.lyrics || '').trim()) { setError('先把歌词填进去，再点润化'); return; }
-        setPolishing(true);
-        try {
-          const data = await api('/api/comfyui-txt2music/lyrics', {
-            method: 'POST',
-            headers: { 'content-type': 'application/json' },
-            body: JSON.stringify({
-              mode: lyricsMode,
-              lyrics: form.lyrics,
-              style: form.style,
-              language: '中文',
-            }),
-          });
-          setPrevLyrics(form.lyrics);
-          set('lyrics', data.text || form.lyrics);
-        } catch (err) {
-          setError('润化失败：' + String((err && err.message) || err));
-        } finally {
-          setPolishing(false);
-        }
-      }
-
       async function generate() {
         setError('');
         if (!String(form.style || '').trim()) { setError('曲风描述不能为空'); return; }
@@ -286,19 +261,6 @@ window.__ModuleLoader__.load({
             className: 'cfl-chip', disabled: writing, onClick: writeLyrics, style: { fontSize: '12px' },
             title: '按上面的主题写一首歌词，覆盖当前歌词',
           }, writing ? '写词中…' : '✍ 写词'),
-          h('select', {
-            value: lyricsMode,
-            onChange: function (e) { setLyricsMode(e.target.value); },
-            title: '润化=保留你的句子，只把表达改具体；重写=保留故事，换一套意象',
-            style: { fontSize: '12px' },
-          },
-            h('option', { value: 'polish' }, '润化'),
-            h('option', { value: 'rewrite' }, '重写')
-          ),
-          h('button', {
-            className: 'cfl-chip', disabled: polishing, onClick: polishLyrics, style: { fontSize: '12px' },
-            title: '按左边选择的力度处理当前歌词',
-          }, polishing ? '处理中…' : '✨ 改写歌词'),
           prevLyrics
             ? h('button', {
                 className: 'cfl-chip', style: { fontSize: '12px' },
