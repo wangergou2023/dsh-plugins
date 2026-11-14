@@ -65,10 +65,20 @@ window.__ModuleLoader__.load({
       const [history, setHistory] = React.useState([]);
       const [images, setImages] = React.useState([]);
       const [viewer, setViewer] = React.useState(null);
+      const [imgInfo, setImgInfo] = React.useState(null);
 
       React.useEffect(function () {
         try { window.localStorage.setItem(FORM_KEY, JSON.stringify({ ...form, image })); } catch { /* 忽略 */ }
       }, [form, image]);
+
+      React.useEffect(function () {
+        if (!image) { setImgInfo(null); return undefined; }
+        let alive = true;
+        api('/api/comfyui-pixal3d/inspect?filename=' + encodeURIComponent(image))
+          .then(function (d) { if (alive) setImgInfo(d && d.width ? d : null); })
+          .catch(function () { if (alive) setImgInfo(null); });
+        return function () { alive = false; };
+      }, [image]);
 
       React.useEffect(function () {
         if (!viewer) return undefined;
@@ -253,7 +263,27 @@ window.__ModuleLoader__.load({
                 return h('option', { key, value: item.name }, item.name);
               })
             ),
-            image ? h('div', { style: { fontSize: '11px', opacity: 0.6, marginTop: '4px', wordBreak: 'break-all' } }, image) : null
+            image ? h('div', { style: { fontSize: '11px', opacity: 0.6, marginTop: '4px', wordBreak: 'break-all' } }, image) : null,
+            imgInfo
+              ? (function () {
+                  const perView = form.mode === 'single'
+                    ? Math.min(imgInfo.width, imgInfo.height)
+                    : form.layout === 'grid2x2'
+                      ? Math.min(Math.floor(imgInfo.width / 2), Math.floor(imgInfo.height / 2))
+                      : Math.min(Math.floor(imgInfo.width / 4), imgInfo.height);
+                  const low = perView < 512;
+                  const ok = perView >= 768;
+                  return h('div', {
+                    style: {
+                      fontSize: '11px', marginTop: '4px',
+                      color: low ? '#e0a24a' : ok ? '#7ab87a' : 'rgba(128,128,128,0.7)',
+                    },
+                  },
+                    '输入 ' + imgInfo.width + '×' + imgInfo.height + ' · 每格约 ' + perView + '×' + perView
+                    + (ok ? '（够用）' : low ? '（偏小，会被放大，细节会糊）' : '（勉强，建议 ≥768）')
+                  );
+                })()
+              : null
           ),
           h('div', { style: { flex: '1 1 380px', minWidth: '320px' } },
             h('div', { style: { display: 'flex', flexWrap: 'wrap', gap: '12px', alignItems: 'flex-end' } },

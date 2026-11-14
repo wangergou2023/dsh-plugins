@@ -15,6 +15,7 @@ import {
   JobStore,
   listOutputs,
   listImages,
+  fetchImageSize,
   friendlyError,
 } from './lib/p3d.js';
 
@@ -300,6 +301,18 @@ export function apply(ctx) {
         } catch (error) {
           sendJson(response, 502, { error: 'upstream_failed', message: String((error && error.message) || error) });
         }
+      },
+    }));
+
+    disposers.push(webServer.register({
+      kind: 'exact',
+      path: '/api/comfyui-pixal3d/inspect',
+      handler: async (request, response) => {
+        const url = new URL(request.url, 'http://localhost');
+        const filename = String(url.searchParams.get('filename') || '');
+        if (!filename) { sendJson(response, 400, { error: 'filename_required' }); return; }
+        const size = await fetchImageSize(new ComfyClient(), filename);
+        sendJson(response, 200, size || { width: 0, height: 0 });
       },
     }));
 
