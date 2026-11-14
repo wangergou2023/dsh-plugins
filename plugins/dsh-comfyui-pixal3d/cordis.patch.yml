@@ -1,0 +1,5 @@
+# Bundle patch layer for dsh-comfyui-pixal3d
+- insert:
+    - id: comfyui-pixal3d
+      name: 'dsh-comfyui-pixal3d'
+      config: {}

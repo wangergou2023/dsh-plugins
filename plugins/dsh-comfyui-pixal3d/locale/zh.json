@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "3D 生成",
+    "description": "把一张四视图转盘图变成 3D 模型：Pixal3D 多视图 → Trellis2 形状与贴图 → GLB。"
+  }
+}
