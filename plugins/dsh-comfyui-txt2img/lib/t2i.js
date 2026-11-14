@@ -49,15 +49,14 @@ export async function buildPrompt(opts = {}) {
   if (!rawText) throw new Error('prompt 不能为空');
 
   // 四视图：套一层版式指令，用户只写角色本身
+  const layoutSuffix = '\n\nLAYOUT (must follow exactly): one single image split into 2 rows and 2 columns = '
+    + 'exactly 4 panels total, one whole figure per panel, nothing in between. '
+    + 'Top-left = front view, top-right = left profile, bottom-left = back view, bottom-right = right profile. '
+    + 'Full body head to toe in every panel, identical design and colors across all four, '
+    + 'neutral A-pose, orthographic camera, seamless pure black background, flat even lighting. '
+    + 'Do not draw a fifth figure. No character sheet borders, no text, no watermark.';
   const text = viewMode === 'ortho4'
-    ? 'character turnaround sheet, exactly four figures arranged in a 2x2 grid, no more and no fewer, '
-      + 'top-left front view, top-right left profile view, bottom-left back view, bottom-right right profile view, '
-      + 'full body head to toe, clear gaps between panels, no overlapping, '
-      + 'identical design, identical colors and proportions in all four views, '
-      + 'neutral A-pose standing, orthographic camera, no perspective distortion, '
-      + 'seamless pure black background, soft even studio lighting, '
-      + rawText
-      + ', ultra detailed, sharp focus, no text, no watermark, no extra limbs, no duplicated torsos'
+    ? rawText.replace(/\s+/g, ' ').trim() + layoutSuffix
     : rawText;
   prompt[knobs.prompt.node].inputs[knobs.prompt.input] = text;
 
@@ -91,12 +90,15 @@ export async function buildPrompt(opts = {}) {
   const seed = Number.isFinite(parsedSeed) ? Math.trunc(parsedSeed) : Math.floor(Math.random() * 2 ** 48);
   prompt[knobs.seed.node].inputs[knobs.seed.input] = seed;
 
-  prompt[knobs.expand.node].inputs[knobs.expand.input] = opts.expand !== false;
+  // 四视图：扩写会重写掉版式约束，强制关闭
+  prompt[knobs.expand.node].inputs[knobs.expand.input] =
+    viewMode === 'ortho4' ? false : opts.expand !== false;
 
   // LoRA 与风格后缀已解耦；旧的 style 单开关仍然兼容（等同两个都开）
   const legacy = opts.style === true;
   prompt[knobs.loraEnabled.node].inputs[knobs.loraEnabled.input] = opts.loraEnabled === true || legacy;
-  prompt[knobs.suffixEnabled.node].inputs[knobs.suffixEnabled.input] = opts.suffixEnabled === true || legacy;
+  prompt[knobs.suffixEnabled.node].inputs[knobs.suffixEnabled.input] =
+    viewMode === 'ortho4' ? false : (opts.suffixEnabled === true || legacy);
 
   const loraName = String(opts.loraName || knobs.loraName.default);
   const live = await availableLoras(opts.host);
