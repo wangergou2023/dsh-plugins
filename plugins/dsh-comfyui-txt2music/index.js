@@ -16,6 +16,7 @@ import {
   listOutputs,
   friendlyError,
 } from './lib/music.js';
+import { scanModels } from './lib/models.js';
 
 const DATA_DIR = process.env.DSH_TXT2MUSIC_DATA || path.join(path.dirname(fileURLToPath(import.meta.url)), '.data');
 const DEFAULT_HOST = 'http://127.0.0.1:8188';
@@ -213,6 +214,7 @@ export function apply(ctx) {
       path: '/api/comfyui-txt2music/meta',
       handler: async (_request, response) => {
         const spec = await loadSpec();
+        const models = await scanModels(spec.template, new ComfyClient().host);
         const client = new ComfyClient();
         const probe = { host: client.host, ok: false };
         try {
@@ -229,6 +231,7 @@ export function apply(ctx) {
         }
         const outputs = await listOutputs(120);
         sendJson(response, 200, {
+          models,
           knobs: spec.slots.knobs,
           outputs: outputs.files,
           comfyui: probe.ok

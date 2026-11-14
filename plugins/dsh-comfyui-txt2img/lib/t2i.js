@@ -3,6 +3,7 @@
  */
 import fs from 'node:fs/promises';
 import path from 'node:path';
+import { applyModelOverrides } from './models.js';
 import { fileURLToPath } from 'node:url';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -133,6 +134,7 @@ export async function fetchAllImages(client, entry) {
 
 export async function run(client, opts = {}, hooks = {}) {
   const { prompt, summary } = await buildPrompt(opts);
+  applyModelOverrides(prompt, opts.models);
   const promptId = await client.submit(prompt);
   if (hooks.onSubmit) hooks.onSubmit(promptId, summary);
   const entry = await client.wait(promptId, opts.timeoutMs || 1800000, (seconds) => {

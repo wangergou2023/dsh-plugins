@@ -11,6 +11,7 @@ import { fileURLToPath } from 'node:url';
 
 import { ComfyClient } from './lib/comfy.js';
 import { buildPrompt, run as runRef2V, saveMedia, JobStore, loadSpec, friendlyError, listOutputs, importFromOutput } from './lib/ref2v.js';
+import { scanModels } from './lib/models.js';
 
 const DATA_DIR = process.env.DSH_REF2V_DATA || path.join(path.dirname(fileURLToPath(import.meta.url)), '.data');
 
@@ -427,6 +428,7 @@ export function apply(ctx) {
       path: '/api/comfyui-refvideo/meta',
       handler: async (_request, response) => {
         const spec = await loadSpec();
+        const models = await scanModels(spec.template, new ComfyClient().host);
         const client = new ComfyClient();
         const probe = { host: client.host, ok: false };
         try {
@@ -443,6 +445,7 @@ export function apply(ctx) {
           probe.error = String((error && error.message) || error);
         }
         sendJson(response, 200, {
+          models,
           knobs: spec.slots.knobs,
           refSlots: spec.slots.refSlots,
           comfyui: probe.ok

@@ -218,6 +218,7 @@ window.__ModuleLoader__.load({
     function UpPanel() {
       const [initial] = React.useState(function () { return loadForm(); });
       const [meta, setMeta] = React.useState(null);
+      const [modelValues, setModelValues] = React.useState({});
       const [metaError, setMetaError] = React.useState('');
       const [image, setImage] = React.useState((initial && initial.image) || '');
       const [cfg, setCfg] = React.useState(function () {
@@ -345,6 +346,14 @@ window.__ModuleLoader__.load({
         }
       }
 
+      function setModelValue(node, field, value) {
+        setModelValues(function (prev) {
+          const next = { ...prev };
+          next[node] = { ...(prev[node] || {}), [field]: value };
+          return next;
+        });
+      }
+
       async function generate() {
         setError('');
         if (!image) { setError('先上传一张图片，或从 input 目录里选一张'); return; }
@@ -355,7 +364,7 @@ window.__ModuleLoader__.load({
           const data = await api('/api/comfyui-upscale/run', {
             method: 'POST',
             headers: { 'content-type': 'application/json' },
-            body: JSON.stringify(body),
+            body: JSON.stringify({ ...body, models: modelValues }),
           });
           setJob({ id: data.job.id, status: data.job.status });
           refreshHistory();
@@ -389,6 +398,26 @@ window.__ModuleLoader__.load({
       }
 
       return h('div', { style: { padding: '18px 20px', maxWidth: '1100px' } },
+        (meta && meta.models && meta.models.length
+          ? h('div', { style: { display: 'flex', flexWrap: 'wrap', gap: '10px', alignItems: 'center', marginTop: '2px', marginBottom: '10px', fontSize: '12px' } },
+              h('span', { style: { opacity: 0.6 } }, '模型：'),
+              meta.models.map(function (m) {
+                const current = (modelValues[m.node] && modelValues[m.node][m.field]) || m.value;
+                return h('label', {
+                  key: m.node + ':' + m.field,
+                  title: m.class_type + ' · 节点 ' + m.node,
+                  style: { display: 'flex', alignItems: 'center', gap: '4px' },
+                },
+                  h('span', { style: { opacity: 0.55 } }, m.label),
+                  h('select', {
+                    value: current,
+                    onChange: function (e) { setModelValue(m.node, m.field, e.target.value); },
+                    style: { fontSize: '11px', maxWidth: '230px' },
+                  }, m.options.map(function (o) { return h('option', { key: o, value: o }, o); }))
+                );
+              })
+            )
+          : null),
         h('div', { style: { display: 'flex', alignItems: 'baseline', gap: '10px', flexWrap: 'wrap', marginBottom: '10px' } },
           h('h2', { style: { margin: 0, fontSize: '18px' } }, '图片放大'),
           h('span', { style: { fontSize: '12px', opacity: 0.65 } },
