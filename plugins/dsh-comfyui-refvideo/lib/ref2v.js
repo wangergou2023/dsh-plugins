@@ -17,15 +17,11 @@ const ID = { image: 900, video: 920, videoParts: 930, audio: 940 };
 
 const TARGET = '136';
 
-let cached = null;
-
 /** 读取模板与注入契约（进程内缓存；改了文件重启插件即可）。 */
 export async function loadSpec() {
-  if (cached) return cached;
   const api = JSON.parse(await fs.readFile(path.join(WORKFLOW_DIR, 'minimax_h3_ref2va.api.json'), 'utf8'));
   const slots = JSON.parse(await fs.readFile(path.join(WORKFLOW_DIR, 'minimax_h3_ref2va.slots.json'), 'utf8'));
-  cached = { template: api, slots };
-  return cached;
+  return { template: api, slots };
 }
 
 function clamp(value, min, max, fallback) {

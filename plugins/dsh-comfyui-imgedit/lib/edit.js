@@ -9,14 +9,10 @@ import { fileURLToPath } from 'node:url';
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const WORKFLOW_DIR = path.join(HERE, '..', 'workflows');
 
-let cached = null;
-
 export async function loadSpec() {
-  if (cached) return cached;
   const template = JSON.parse(await fs.readFile(path.join(WORKFLOW_DIR, 'qwen_image_edit.api.json'), 'utf8'));
   const slots = JSON.parse(await fs.readFile(path.join(WORKFLOW_DIR, 'qwen_image_edit.slots.json'), 'utf8'));
-  cached = { template, slots };
-  return cached;
+  return { template, slots };
 }
 
 function clamp(value, min, max, fallback) {

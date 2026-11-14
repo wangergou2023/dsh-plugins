@@ -9,7 +9,6 @@ import { fileURLToPath } from 'node:url';
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const WORKFLOW_DIR = path.join(HERE, '..', 'workflows');
 
-let cached = null;
 let loraCache = { at: 0, list: [] };
 
 /** 从 ComfyUI 读当前可用的 LoRA 列表（30 秒缓存）。读不到就返回空数组，不阻断生成。 */
@@ -29,11 +28,9 @@ export async function availableLoras(host = 'http://127.0.0.1:8188') {
 }
 
 export async function loadSpec() {
-  if (cached) return cached;
   const template = JSON.parse(await fs.readFile(path.join(WORKFLOW_DIR, 'krea2_turbo_t2i.api.json'), 'utf8'));
   const slots = JSON.parse(await fs.readFile(path.join(WORKFLOW_DIR, 'krea2_turbo_t2i.slots.json'), 'utf8'));
-  cached = { template, slots };
-  return cached;
+  return { template, slots };
 }
 
 function clamp(value, min, max, fallback) {

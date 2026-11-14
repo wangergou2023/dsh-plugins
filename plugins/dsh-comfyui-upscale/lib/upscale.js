@@ -9,15 +9,12 @@ import { fileURLToPath } from 'node:url';
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const WORKFLOW_DIR = path.join(HERE, '..', 'workflows');
 
-let cached = null;
 let inputCache = { at: 0, list: [] };
 
 export async function loadSpec() {
-  if (cached) return cached;
   const template = JSON.parse(await fs.readFile(path.join(WORKFLOW_DIR, 'seedvr2_upscale_image.api.json'), 'utf8'));
   const slots = JSON.parse(await fs.readFile(path.join(WORKFLOW_DIR, 'seedvr2_upscale_image.slots.json'), 'utf8'));
-  cached = { template, slots };
-  return cached;
+  return { template, slots };
 }
 
 /** ComfyUI input 目录里可用的图片名（30 秒缓存）。 */

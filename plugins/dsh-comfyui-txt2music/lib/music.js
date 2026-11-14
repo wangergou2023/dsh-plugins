@@ -12,14 +12,10 @@ const WORKFLOW_DIR = path.join(HERE, '..', 'workflows');
 const AUDIO_EXT = new Set(['.flac', '.mp3', '.opus', '.wav', '.m4a', '.ogg']);
 const MAX_JOBS = 40;
 
-let cached = null;
-
 export async function loadSpec() {
-  if (cached) return cached;
   const template = JSON.parse(await fs.readFile(path.join(WORKFLOW_DIR, 'yue2_text2music.api.json'), 'utf8'));
   const slots = JSON.parse(await fs.readFile(path.join(WORKFLOW_DIR, 'yue2_text2music.slots.json'), 'utf8'));
-  cached = { template, slots };
-  return cached;
+  return { template, slots };
 }
 
 function clamp(value, min, max, fallback) {
