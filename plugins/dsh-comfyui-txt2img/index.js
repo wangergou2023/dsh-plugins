@@ -301,7 +301,12 @@ export function apply(ctx) {
           if (current && typeof current.provider === 'string' && typeof current.model === 'string') selection = current;
         } catch { /* 走默认 */ }
 
-        const loraName = String((body && body.loraName) || '');
+        const loraRaw = String((body && body.loraName) || '');
+        // 版式类 LoRA（QuadView 之类）的名字会把模型带偏去写「四视图」，直接不外传
+        const layoutLora = /quad\s*view|turnaround|multi.?view|4\s*view|three.?view/i.test(loraRaw);
+        const loraName = layoutLora
+          ? ''
+          : loraRaw.replace(/^.*[\\/]/, '').replace(/\.(safetensors|ckpt|pt|bin)$/i, '').replace(/[_-]+/g, ' ').trim();
         const system = [
           '你是文生图提示词助手，服务 Krea2 Turbo 模型。',
           '任务：把用户给的提示词改写成更有效的一版，只输出改写后的提示词本身。',
@@ -317,6 +322,10 @@ export function apply(ctx) {
           '- 主体与外观、动作、环境、光线、构图、画风都要具体，不要空话。',
           '- 保持用户原始语言；不要编造用户没提的主体。',
           '- 长度控制在原文的 1–2 倍，不要无限扩写。',
+          '',
+          '绝对禁止：',
+          '- 不要写「四视图 / 三视图 / 多视角 / 四分之三视角 / 角色设定图 / 分屏 / 并排展示 / 2x2」等版式或构图方式；只描述一个画面。',
+          '- [SUFFIX] 只写材质、光线、画风、镜头质感，不要写视角或版式。',
         ].join('\n');
         const user = `所选 LoRA：${loraName || '（无）'}\n\n原始描述：\n${raw}`;
 
@@ -364,9 +373,13 @@ export function apply(ctx) {
           }
 
           const parsed = splitPolish(out);
+          const stripLayout = (text) => String(text || '')
+            .replace(/[，,。;；]?\s*(四视图|三视图|多视图|多视角|四分之三视角|角色设定图|分屏|并排展示|2\s*[x×]\s*2)[^，,。;；]*/g, '')
+            .replace(/^[，,。;；\s]+|[，,；\s]+$/g, '')
+            .trim();
           sendJson(response, 200, {
-            prompt: parsed.prompt || raw,
-            suffix: parsed.suffix,
+            prompt: stripLayout(parsed.prompt) || raw,
+            suffix: stripLayout(parsed.suffix),
             model: selection ? selection.model : 'default',
           });
         } catch (error) {
