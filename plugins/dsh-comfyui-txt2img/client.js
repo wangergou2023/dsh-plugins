@@ -364,6 +364,29 @@ window.__ModuleLoader__.load({
         });
       }
 
+      /** 把「单视图模式下残留的四视图配置」清掉。 */
+      function fixToSingle() {
+        const cleaned = String(prompt)
+          .replace(/[，,。;；]?\s*(采用)?四视图布局[:：][^，,。;；]*/g, '')
+          .replace(/[，,。;；]?\s*四视图[^，,。;；]*/g, '')
+          .replace(/[，,。;；]?\s*四分之三视角[^，,。;；]*/g, '')
+          .replace(/[，,。;；]?\s*2\s*[x×]\s*2[^，,。;；]*/g, '')
+          .replace(/\s{2,}/g, '，')
+          .replace(/^[，,。;；\s]+|[，,。;；\s]+$/g, '')
+          .trim();
+        setPrompt(cleaned || '一个金属质感的机器人，全身正面站姿，纯色背景，平光，正交视角');
+        setCfg(function (prev) {
+          return {
+            ...prev,
+            viewMode: 'single',
+            loraEnabled: false,
+            suffixEnabled: false,
+            expand: false,
+            styleSuffix: /四视图|四分之三|2x2|2×2/.test(String(prev.styleSuffix || '')) ? '' : prev.styleSuffix,
+          };
+        });
+      }
+
       async function generate() {
         setError('');
         if (!prompt.trim()) { setError('先写提示词'); return; }
@@ -604,8 +627,19 @@ window.__ModuleLoader__.load({
         ),
 
         (cfg.viewMode !== 'ortho4' && /turnaround|four view|four views|2x2|四视图|四格/i.test(prompt))
-          ? h('div', { style: { fontSize: '11px', color: '#e0a24a', marginTop: '6px' } },
-              '提示：提示词看起来是四视图，但当前是「单视图」模式——不会自动套 2×2 版式，也不会挂 QuadView LoRA。要四格请把出图模式切过去。')
+          ? h('div', { style: { fontSize: '11px', color: '#e0a24a', marginTop: '6px', display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap' } },
+              h('span', null, '提示：提示词/LoRA/后缀里还有四视图的内容，但模式是「单视图」。'),
+              h('button', {
+                className: 'cfl-chip', style: { fontSize: '11px' },
+                onClick: fixToSingle,
+                title: '清掉提示词里的四视图描述、关掉 QuadView LoRA 与风格后缀',
+              }, '一键改回单视图'),
+              h('button', {
+                className: 'cfl-chip', style: { fontSize: '11px' },
+                onClick: function () { setViewMode('ortho4'); },
+                title: '改成 2×2 四视图模式',
+              }, '改成四视图模式')
+            )
           : null,
         cfg.viewMode === 'ortho4'
           ? h('div', { style: { fontSize: '11px', opacity: 0.55, marginTop: '6px' } },
