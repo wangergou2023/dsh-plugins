@@ -1,0 +1,894 @@
+/**
+ * dsh-comfyui-music-mv —— 音乐 MV 生成插件。
+ *
+ * 一条链：出歌（YuE2）→ 主角定妆图（Krea2）→ 每镜头 5–15s 视频（MiniMax H3）
+ *        → ConcatenateVideo 拼起来 + complete_audio 压原曲 → 成品 mp4。
+ *
+ * 为什么这么设计：H3 单段最多 15 秒，所以 MV 必然是 N 个镜头拼；
+ * 镜头自带的音轨一律丢掉，整首歌只在拼接时压一次，音画不会串。
+ */
+import fs from 'node:fs/promises';
+import path from 'node:path';
+import { randomUUID } from 'node:crypto';
+import { fileURLToPath } from 'node:url';
+
+import { ComfyClient } from './lib/comfy.js';
+import { applyModelOverrides } from './lib/models.js';
+import { buildPrompt as buildSongPrompt, fetchAudio as fetchSongAudio, saveAudio } from './lib/music.js';
+import { buildPrompt as buildT2iPrompt } from './lib/t2i.js';
+import {
+  LIMITS, audioDuration, buildShotPrompt, buildStitchPrompt, fetchVideo, saveVideo,
+  normalizePlan, parsePlanJson, suggestShotCount,
+} from './lib/mv.js';
+
+const HERE = path.dirname(fileURLToPath(import.meta.url));
+const DATA_DIR = process.env.DSH_MUSIC_MV_DATA || path.join(HERE, '.data');
+const DEFAULT_HOST = 'http://127.0.0.1:8188';
+
+const ASPECTS = ['16:9 (Widescreen)', '9:16 (Portrait)', '1:1 (Square)', '4:3 (Standard)', '3:4 (Portrait)', '21:9 (Cinematic)'];
+
+const IMAGE_EXT = new Set(['.png', '.jpg', '.jpeg', '.webp']);
+const VIDEO_EXT = new Set(['.mp4', '.webm', '.mov', '.mkv']);
+const AUDIO_EXT = new Set(['.flac', '.mp3', '.wav', '.ogg', '.opus', '.m4a']);
+
+/* ---------------------------- 工具函数 ---------------------------- */
+
+function text(lines) {
+  return { lines: (lines || []).filter((l) => l !== '' && l !== undefined && l !== null) };
+}
+
+const OUTPUT = {
+  schema: { type: 'object' },
+  render(_args, value) {
+    const lines = value && Array.isArray(value.lines) ? value.lines : [];
+    return [{ type: 'text', text: lines.join('\n') }];
+  },
+};
+
+function sendJson(response, status, body) {
+  response.writeHead(status, {
+    'content-type': 'application/json; charset=utf-8',
+    'cache-control': 'no-store',
+  });
+  response.end(JSON.stringify(body));
+}
+
+async function readRawBody(request) {
+  const chunks = [];
+  for await (const chunk of request) chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+  return Buffer.concat(chunks);
+}
+
+async function readJsonBody(request) {
+  const buf = await readRawBody(request);
+  if (buf.length === 0) return null;
+  try { return JSON.parse(buf.toString('utf8')); } catch { return null; }
+}
+
+function sameOrigin(request) {
+  const origin = request.headers && request.headers.origin;
+  const host = request.headers && request.headers.host;
+  if (origin === undefined) return true;
+  if (host === undefined) return false;
+  return origin === `http://${host}` || origin === `https://${host}`;
+}
+
+function parseMultipart(buffer, contentType) {
+  const m = /boundary=(?:"([^"]+)"|([^;]+))/i.exec(String(contentType || ''));
+  const boundary = m && (m[1] || m[2]);
+  if (!boundary) return [];
+  const delimiter = Buffer.from('--' + boundary);
+  const files = [];
+  let from = 0;
+  for (;;) {
+    const start = buffer.indexOf(delimiter, from);
+    if (start < 0) break;
+    const next = buffer.indexOf(delimiter, start + delimiter.length);
+    if (next < 0) break;
+    const part = buffer.subarray(start + delimiter.length + 2, Math.max(start + delimiter.length + 2, next - 2));
+    const split = part.indexOf('\r\n\r\n');
+    if (split > 0) {
+      const head = part.subarray(0, split).toString('utf8');
+      const body = part.subarray(split + 4);
+      const nameMatch = /filename="([^"]*)"/i.exec(head);
+      if (nameMatch && nameMatch[1]) {
+        const typeMatch = /content-type:\s*([^\r\n]+)/i.exec(head);
+        files.push({ filename: nameMatch[1], mime: typeMatch ? typeMatch[1].trim() : 'application/octet-stream', data: body });
+      }
+    }
+    from = next;
+  }
+  return files;
+}
+
+async function readUploads(request) {
+  const buf = await readRawBody(request);
+  return parseMultipart(buf, (request.headers && request.headers['content-type']) || '');
+}
+
+function mimeOfName(name) {
+  const ext = path.extname(String(name || '')).toLowerCase();
+  if (VIDEO_EXT.has(ext)) return ext === '.webm' ? 'video/webm' : ext === '.mov' ? 'video/quicktime' : 'video/mp4';
+  if (AUDIO_EXT.has(ext)) return ext === '.flac' ? 'audio/flac' : ext === '.mp3' ? 'audio/mpeg' : ext === '.wav' ? 'audio/wav' : 'audio/ogg';
+  if (ext === '.jpg' || ext === '.jpeg') return 'image/jpeg';
+  if (ext === '.webp') return 'image/webp';
+  return 'image/png';
+}
+
+/** 宿主 llm 要富消息：content 必须是 parts 数组，每条带 id 与 source。 */
+function hostMessages(systemText, userText) {
+  const list = [];
+  if (systemText) {
+    list.push({ id: randomUUID(), role: 'system', content: [{ type: 'text', text: systemText }], source: { kind: 'system-prompt' } });
+  }
+  list.push({ id: randomUUID(), role: 'user', content: [{ type: 'text', text: userText }], source: { kind: 'user' } });
+  return list;
+}
+
+/** 一口气取回 LLM 正文（兼容 text-delta 与 block-end 两种下发方式）。 */
+async function llmText(ctx, system, user, options = {}) {
+  let llm;
+  try { llm = ctx.get('llm'); } catch { llm = undefined; }
+  if (!llm || typeof llm.stream !== 'function') throw new Error('宿主没有可用的模型服务（llm）');
+
+  let selection;
+  try {
+    const service = ctx.get('agentDefaultModel');
+    const current = service && typeof service.currentSelection === 'function' ? service.currentSelection() : undefined;
+    if (current && typeof current.provider === 'string' && typeof current.model === 'string') selection = current;
+  } catch { /* 走默认 */ }
+
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), options.timeoutMs || 180000);
+  const request = {
+    messages: hostMessages(system, user),
+    maxTokens: options.maxTokens || 3000,
+    reasoningEffort: 'off',
+    signal: controller.signal,
+  };
+  if (selection) { request.provider = selection.provider; request.model = selection.model; }
+
+  let out = '';
+  const streamed = new Set();
+  try {
+    for await (const chunk of llm.stream(request)) {
+      if (!chunk) continue;
+      if (chunk.type === 'text-delta' && typeof chunk.text === 'string') {
+        out += chunk.text;
+        streamed.add(chunk.index);
+      } else if (chunk.type === 'block-end' && chunk.block && chunk.block.type === 'text' && typeof chunk.block.text === 'string') {
+        if (!streamed.has(chunk.index)) out += chunk.block.text;
+      }
+    }
+  } finally {
+    clearTimeout(timer);
+  }
+  out = out.trim();
+  if (!out) throw new Error('模型没有返回正文（可能推理占满了额度）');
+  return { text: out, model: selection ? selection.model : 'default' };
+}
+
+function friendlyError(error) {
+  const raw = String((error && error.message) || error || '');
+  const hint = (t) => `${t}｜原始信息：${raw.replace(/\s+/g, ' ').slice(0, 500)}`;
+  if (/out of memory|not enough memory|allocation on device/i.test(raw)) {
+    return hint('显存不足：把「像素」降到 0.3–0.4、镜头时长降到 5 秒，或减少镜头数');
+  }
+  if (/prompt outputs failed validation|node_errors/i.test(raw)) {
+    return hint('工作流校验失败：多半是素材没进 ComfyUI 的 input 目录，或参数越界');
+  }
+  if (/no such file|file not found|not in input|cannot find/i.test(raw)) {
+    return hint('素材找不到：参考图/音频/视频必须先上传到 ComfyUI 的 input 目录');
+  }
+  if (/cuda/i.test(raw)) return hint('CUDA 报错：可先重启 ComfyUI 再试');
+  if (/超时|timeout/i.test(raw)) return hint('等待超时：任务可能还在跑，去 ComfyUI 队列看一眼');
+  return raw.slice(0, 800) || '未知错误';
+}
+
+/* ---------------------------- 任务存储 ---------------------------- */
+
+const MAX_JOBS = 30;
+
+class JobStore {
+  constructor(dataDir) {
+    this.file = path.join(dataDir, 'mv-jobs.json');
+    this.jobs = new Map();
+    this.ready = this.load();
+  }
+
+  async load() {
+    try {
+      const list = JSON.parse(await fs.readFile(this.file, 'utf8'));
+      if (Array.isArray(list)) for (const job of list) this.jobs.set(job.id, job);
+    } catch { /* 首次运行 */ }
+  }
+
+  async persist() {
+    const list = [...this.jobs.values()].sort((a, b) => b.createdAt - a.createdAt).slice(0, MAX_JOBS);
+    this.jobs = new Map(list.map((job) => [job.id, job]));
+    await fs.mkdir(path.dirname(this.file), { recursive: true });
+    await fs.writeFile(this.file, JSON.stringify(list, null, 2), 'utf8');
+  }
+
+  create(params) {
+    const id = 'mv_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+    const job = { id, status: 'queued', stage: 'queued', createdAt: Date.now(), updatedAt: Date.now(), params, shots: [] };
+    this.jobs.set(id, job);
+    return job;
+  }
+
+  get(id) { return this.jobs.get(id) || null; }
+
+  list(limit = 20) {
+    return [...this.jobs.values()].sort((a, b) => b.createdAt - a.createdAt).slice(0, limit);
+  }
+
+  async patch(id, patch) {
+    const job = this.jobs.get(id);
+    if (!job) return null;
+    Object.assign(job, patch, { updatedAt: Date.now() });
+    await this.persist();
+    return job;
+  }
+
+  async patchShot(id, index, patch) {
+    const job = this.jobs.get(id);
+    if (!job) return null;
+    const shot = job.shots.find((s) => s.index === index);
+    if (shot) Object.assign(shot, patch);
+    job.updatedAt = Date.now();
+    await this.persist();
+    return job;
+  }
+}
+
+/* ---------------------------- 分镜表生成 ---------------------------- */
+
+function planSystemPrompt(shotCount, duration) {
+  return [
+    '你是音乐 MV 的导演兼作词。用户给一个主题，你要产出一支 MV 的完整方案：故事、歌词、分镜。',
+    '只输出一个 JSON 对象，不要解释，不要代码块。',
+    '',
+    'JSON 结构：',
+    '{',
+    '  "title": "歌名（中文，短）",',
+    '  "logline": "一句话故事：谁、想要什么、被什么拦住",',
+    '  "arc": "情绪曲线：起…（前奏）承…（主歌）转…（副歌爆发）合…（尾声）",',
+    '  "ending": "结尾画面：最后一个镜头怎么收",',
+    '  "notes": "导演阐述一两句：视觉基调、调色、为什么这么拍",',
+    '  "style": "曲风（英文更稳）：流派、乐器、人声、情绪、速度",',
+    '  "character": "主角外形一句话，全片同一个人：年龄性别、发型发色、五官特征、服装",',
+    '  "lyrics": "完整歌词，用 [Verse] [Chorus] [Bridge] 标记段落，每句一行",',
+    '  "shots": [{',
+    '    "label": "镜头标题（两句内）",',
+    '    "section": "对应哪段歌词，例如 [Chorus] 第1句",',
+    '    "beat": "这一镜的情绪，两三个词",',
+    '    "camera": "景别 + 运镜，例如「中景，手持跟拍」「特写，缓慢推」",',
+    '    "transition": "怎么接下一镜，例如「硬切」「叠化」「同构图转场」",',
+    '    "prompt": "画面描述：环境、人物动作、光线、色调"',
+    '  }]',
+    '}',
+    '',
+    '硬性规则：',
+    `1. shots 必须正好 ${shotCount} 个，一个不多一个不少。`,
+    `2. 整首歌约 ${duration} 秒，所以每个镜头约 ${Math.round(duration / shotCount)} 秒。`,
+    '3. 分镜必须服务故事：镜头顺序就是情绪推进顺序；主角从开头到结尾要有变化（去、找、遇到、失去、接受这一类推进）。',
+    '4. section 必须落在真实存在的歌词段落上，不许编不存在的段落名。',
+    '5. prompt 只写画面：环境、动作、光线。绝对不能出现歌词、字幕、文字、水印、logo。',
+    '6. 主角必须始终是同一个人（脸、发型、服装不变），可以换环境、换景别、换机位。',
+    '7. 不要出现「四视图」「多视角」「分屏」「拼图」这类排版词。',
+    '8. 歌词要能唱：副歌重复、句子短、押韵。',
+  ].join('\n');
+}
+
+async function generatePlan(ctx, params) {
+  const duration = Math.min(LIMITS.songMaxSeconds, Math.max(LIMITS.songMinSeconds, Number(params.duration) || 60));
+  const shotCount = Math.max(1, Math.min(LIMITS.maxShots, Number(params.shotCount) || suggestShotCount(duration)));
+  const theme = String(params.theme || '').trim();
+  if (!theme) throw new Error('先给一个主题（一句话就行）');
+
+  const userLines = [
+    `主题：${theme}`,
+    `时长：${duration} 秒`,
+    `镜头数：${shotCount}`,
+  ];
+  if (String(params.style || '').trim()) userLines.push(`曲风必须贴近：${String(params.style).trim()}`);
+  if (String(params.lyrics || '').trim()) userLines.push(`歌词用我给的这版（只补段落标记，不要重写）：\n${String(params.lyrics).trim()}`);
+
+  const { text: raw, model } = await llmText(ctx, planSystemPrompt(shotCount, duration), userLines.join('\n'), { maxTokens: 4000 });
+  const data = parsePlanJson(raw);
+  const plan = normalizePlan(data, { duration, shotCount });
+  return { plan, model, raw };
+}
+
+/* ---------------------------- 主流程 ---------------------------- */
+
+async function ensureComfyFile(client, value, kind) {
+  const item = String(value || '').trim();
+  if (!item) return null;
+  if (!path.isAbsolute(item)) return item; // 已经是 ComfyUI input 里的文件名
+  const buffer = await fs.readFile(item);
+  const name = await client.upload(buffer, path.basename(item), mimeOfName(item));
+  return name;
+}
+
+async function readLocalFile(value) {
+  const item = String(value || '').trim();
+  if (!item || !path.isAbsolute(item)) return null;
+  const buffer = await fs.readFile(item);
+  return { buffer, name: path.basename(item) };
+}
+
+async function execute(job, params) {
+  const client = new ComfyClient(params.host || DEFAULT_HOST);
+  const alive = await client.alive();
+  if (alive === null) throw new Error('连不上 ComfyUI（默认 127.0.0.1:8188），请先启动它');
+
+  const total = () => (job.shots || []).length;
+
+  /* 1. 歌 */
+  await jobPatch(job.id, { stage: 'song', stageLabel: '生成歌曲', error: null });
+  let songName;
+  let songBuffer;
+  let songFileName;
+  let songInfo;
+
+  const existingSong = String(params.song || '').trim();
+  if (existingSong) {
+    const local = await readLocalFile(existingSong);
+    if (local) {
+      songBuffer = local.buffer;
+      songFileName = local.name;
+      songName = await client.upload(songBuffer, songFileName, mimeOfName(songFileName));
+    } else {
+      songName = existingSong;
+      const res = await fetch(client.host + '/view?filename=' + encodeURIComponent(existingSong) + '&type=input', { signal: AbortSignal.timeout(120000) });
+      if (!res.ok) throw new Error('取不到指定的音频：' + existingSong);
+      songBuffer = Buffer.from(await res.arrayBuffer());
+      songFileName = existingSong;
+    }
+    songInfo = audioDuration(songBuffer, songFileName);
+  } else {
+    const built = await buildSongPrompt({
+      style: params.style,
+      lyrics: params.lyrics,
+      duration: params.duration,
+      format: 'flac',
+      steps: params.songSteps,
+      seed: params.songSeed,
+      filenamePrefix: 'mv/' + job.id,
+    });
+    applyModelOverrides(built.prompt, params.models);
+    const promptId = await client.submit(built.prompt);
+    const entry = await client.wait(promptId, 3600000);
+    const audio = await fetchSongAudio(client, entry);
+    songBuffer = audio.buffer;
+    songFileName = audio.filename;
+    songInfo = audioDuration(songBuffer, songFileName);
+    songName = await client.upload(songBuffer, 'mv_' + job.id + path.extname(songFileName || '.flac'), mimeOfName(songFileName));
+  }
+  if (!songInfo || !songInfo.duration) {
+    throw new Error('读不出音频时长（只支持 flac/mp3）：请用 flac 格式出歌，或手动指定 songSeconds');
+  }
+  const songDuration = Number(params.songSeconds) || songInfo.duration;
+  const savedSong = await saveAudio(DATA_DIR, job.id, { buffer: songBuffer, filename: songFileName || 'song.flac' });
+  await jobPatch(job.id, {
+    stage: 'plan',
+    stageLabel: '排分镜',
+    song: { file: savedSong, name: songName, duration: songDuration, estimated: !!songInfo.estimated },
+  });
+
+  /* 2. 分镜表 */
+  let plan;
+  if (params.plan && typeof params.plan === 'object') {
+    plan = normalizePlan(params.plan, { duration: songDuration, shotCount: params.shotCount });
+  } else {
+    // 注意：ctx 不能塞进 params —— 任务会被写成 json，ctx 是循环引用。
+    const generated = await generatePlan(hostCtx, {
+      theme: params.theme,
+      style: params.style,
+      lyrics: params.lyrics,
+      duration: songDuration,
+      shotCount: params.shotCount,
+    });
+    plan = generated.plan;
+  }
+  const shots = plan.shots.map((shot) => ({
+    index: shot.index, label: shot.label, prompt: shot.prompt,
+    start: shot.start, end: shot.end, seconds: shot.seconds,
+    status: 'pending', file: null, comfy: null, error: null, seed: null, elapsedSeconds: 0,
+  }));
+  await jobPatch(job.id, { plan, shots, total: shots.length });
+
+  /* 3. 主角定妆图 */
+  await jobPatch(job.id, { stage: 'hero', stageLabel: '生成主角定妆图' });
+  let heroImage = null;
+  if (params.heroImage) {
+    heroImage = await ensureComfyFile(client, params.heroImage, 'image');
+  } else if (params.autoHero !== false) {
+    const heroPrompt = [
+      plan.character || '一位年轻的主角',
+      '单人半身肖像，正面看镜头，五官清晰，光线均匀',
+      plan.style ? `风格：${plan.style}` : '',
+      '电影感写真，纯色浅背景，不要文字',
+    ].filter(Boolean).join('，');
+    const built = await buildT2iPrompt({
+      prompt: heroPrompt,
+      aspectRatio: params.heroAspect || '1:1 (Square)',
+      megapixels: 1.0,
+      steps: params.heroSteps || 8,
+      filenamePrefix: 'mv_hero/' + job.id,
+    });
+    applyModelOverrides(built.prompt, params.models);
+    const promptId = await client.submit(built.prompt);
+    const entry = await client.wait(promptId, 1800000);
+    const item = Object.values(entry.outputs || {}).flatMap((o) => o.images || [])[0];
+    if (!item) throw new Error('定妆图没有产出');
+    const url = client.host + '/view?filename=' + encodeURIComponent(item.filename)
+      + '&subfolder=' + encodeURIComponent(item.subfolder || '') + '&type=' + encodeURIComponent(item.type || 'output');
+    const res = await fetch(url, { signal: AbortSignal.timeout(120000) });
+    const buffer = Buffer.from(await res.arrayBuffer());
+    await fs.mkdir(path.join(DATA_DIR, job.id), { recursive: true });
+    const heroFile = path.join(DATA_DIR, job.id, 'hero.png');
+    await fs.writeFile(heroFile, buffer);
+    heroImage = await client.upload(buffer, 'mv_hero_' + job.id + '.png', 'image/png');
+    await jobPatch(job.id, { hero: { file: heroFile, name: heroImage } });
+  }
+
+  /* 4. 逐镜头渲染 */
+  await jobPatch(job.id, { stage: 'render', stageLabel: '渲染镜头' });
+  const clips = [];
+  for (const shot of job.shots) {
+    if (shot.status === 'done' && shot.comfy && params.resume !== false) {
+      clips.push(shot.comfy);
+      continue;
+    }
+    await jobPatch(job.id, { currentShot: shot.index });
+    await jobPatchShot(job.id, shot.index, { status: 'running', startedAt: Date.now(), error: null });
+    try {
+      const built = await buildShotPrompt(plan, shot, {
+        heroImage,
+        aspectRatio: params.aspectRatio || '16:9 (Widescreen)',
+        megapixels: params.megapixels || 0.4,
+        seed: params.seed,
+        lightning: params.lightning !== false,
+        refImageSize: params.refImageSize || 'match',
+      });
+      applyModelOverrides(built.prompt, params.models);
+      const promptId = await client.submit(built.prompt);
+      const entry = await client.wait(promptId, params.shotTimeoutMs || 3600000);
+      const { buffer } = await fetchVideo(client, entry, { nodeId: '92' });
+      const fileName = `shot_${String(shot.index + 1).padStart(2, '0')}.mp4`;
+      const file = await saveVideo(path.join(DATA_DIR, job.id), fileName, buffer);
+      const comfy = await client.upload(buffer, `mv_${job.id}_${shot.index + 1}.mp4`, 'video/mp4');
+      clips.push(comfy);
+      await jobPatchShot(job.id, shot.index, {
+        status: 'done', file, comfy, bytes: buffer.length, promptText: built.promptText,
+        seed: built.summary.seed, elapsedSeconds: Math.round((Date.now() - (shot.startedAt || Date.now())) / 1000),
+      });
+      await jobPatch(job.id, { done: job.shots.filter((s) => s.status === 'done').length });
+    } catch (error) {
+      await jobPatchShot(job.id, shot.index, { status: 'failed', error: friendlyError(error) });
+      throw new Error(`第 ${shot.index + 1} 个镜头失败：${friendlyError(error)}`);
+    }
+  }
+
+  /* 5. 拼接 + 压曲 */
+  await jobPatch(job.id, { stage: 'stitch', stageLabel: '拼接并压上原曲' });
+  const graph = buildStitchPrompt({
+    clips,
+    audio: songName,
+    filenamePrefix: 'video/MV_' + job.id,
+  });
+  const promptId = await client.submit(graph);
+  const entry = await client.wait(promptId, 1800000);
+  const { buffer: finalBuffer } = await fetchVideo(client, entry, { nodeId: '2002' });
+  const finalFile = await saveVideo(DATA_DIR, job.id + '.mp4', finalBuffer);
+
+  await jobPatch(job.id, {
+    status: 'done',
+    stage: 'done',
+    stageLabel: '完成',
+    file: finalFile,
+    bytes: finalBuffer.length,
+    mediaUrl: '/api/comfyui-music-mv/media?id=' + job.id,
+    elapsedSeconds: Math.round((Date.now() - job.createdAt) / 1000),
+  });
+}
+
+let jobStore;
+let hostCtx = null;
+
+async function jobPatch(id, patch) {
+  return jobStore ? jobStore.patch(id, patch) : null;
+}
+
+async function jobPatchShot(id, index, patch) {
+  return jobStore ? jobStore.patchShot(id, index, patch) : null;
+}
+
+function startJob(job, params) {
+  (async () => {
+    try {
+      await jobStore.patch(job.id, { status: 'running' });
+      await execute(job, params);
+    } catch (error) {
+      await jobStore.patch(job.id, {
+        status: 'failed',
+        stage: 'failed',
+        error: friendlyError(error),
+        elapsedSeconds: Math.round((Date.now() - job.createdAt) / 1000),
+      });
+    }
+  })();
+  return job;
+}
+
+/* ---------------------------- 插件 ---------------------------- */
+
+export const inject = ['tools'];
+
+export function apply(ctx) {
+  const tools = ctx.tools;
+  const disposers = [];
+  jobStore = new JobStore(DATA_DIR);
+  hostCtx = ctx;
+
+  async function meta() {
+    const client = new ComfyClient();
+    const probe = { host: client.host, online: false };
+    try {
+      const res = await fetch(client.host + '/system_stats', { signal: AbortSignal.timeout(5000) });
+      if (res.ok) {
+        const data = await res.json();
+        probe.online = true;
+        probe.version = data.system?.comfyui_version;
+        probe.device = data.devices?.[0]?.name;
+        probe.vramFreeGB = Math.round(((data.devices?.[0]?.vram_free || 0) / 1024 ** 3) * 10) / 10;
+      }
+    } catch (error) {
+      probe.error = String((error && error.message) || error);
+    }
+    return {
+      limits: LIMITS,
+      aspects: ASPECTS,
+      defaults: { duration: 60, aspectRatio: '16:9 (Widescreen)', megapixels: 0.4, shotSeconds: 8, songFormat: 'flac' },
+      stages: [
+        { key: 'song', label: '生成歌曲' },
+        { key: 'plan', label: '排分镜' },
+        { key: 'hero', label: '定妆图' },
+        { key: 'render', label: '渲染镜头' },
+        { key: 'stitch', label: '拼接压曲' },
+      ],
+      comfyui: probe,
+    };
+  }
+
+  /* ------------------- 工具 ------------------- */
+
+  tools.register({
+    name: 'mv_plan',
+    description: '音乐 MV 第一步：给一个主题，产出歌名、曲风、歌词、主角外形和分镜表（不占 GPU）。返回可直接看的 JSON。',
+    parameters: {
+      type: 'object',
+      properties: {
+        theme: { type: 'string', description: '主题，一句话，例如「失恋后在雨夜街头走了很久」' },
+        duration: { type: 'number', description: '歌曲时长秒数，15–600，默认 60' },
+        shotCount: { type: 'number', description: '镜头数；不填按每镜约 10 秒自动算' },
+        style: { type: 'string', description: '指定曲风（可选）' },
+        lyrics: { type: 'string', description: '自带歌词（可选），那就只补段落标记不重写' },
+      },
+      required: ['theme'],
+    },
+    output: OUTPUT,
+    timeoutMs: 240000,
+    async execute(args) {
+      const { plan, model } = await generatePlan(ctx, args);
+      const story = plan.story || {};
+      const lines = [
+        `《${plan.title}》 · ${plan.duration}s · ${plan.shotCount} 个镜头 · ${model}`,
+        story.logline ? `故事：${story.logline}` : '',
+        story.arc ? `情绪：${story.arc}` : '',
+        story.ending ? `结尾：${story.ending}` : '',
+        story.notes ? `阐述：${story.notes}` : '',
+        `曲风：${plan.style}`,
+        `主角：${plan.character}`,
+        '',
+        '剧本 / 分镜：',
+        ...plan.shots.map((s) => [
+          `${s.index + 1}. [${s.start}s-${s.end}s] ${s.label}${s.section ? ` · 对位 ${s.section}` : ''}${s.beat ? ` · ${s.beat}` : ''}`,
+          `   运镜：${s.camera || '—'}${s.transition ? ` ｜ 转场：${s.transition}` : ''}`,
+          `   画面：${s.prompt}`,
+        ].join('\n')),
+        '',
+        '歌词：',
+        ...plan.lyrics.split('\n'),
+        '',
+        'JSON（可直接喂给 mv_render 的 plan）：',
+        JSON.stringify(plan),
+      ];
+      return text(lines);
+    },
+  });
+
+  tools.register({
+    name: 'mv_render',
+    description: '音乐 MV 全流程：出歌 → 定妆图 → 逐镜头渲染（每镜 5–15 秒，MiniMax H3）→ 拼接并压上原曲，后台跑。用 mv_status 查进度。',
+    parameters: {
+      type: 'object',
+      properties: {
+        theme: { type: 'string', description: '主题；给了 plan 时可省' },
+        plan: { type: 'object', description: 'mv_plan 产出的 JSON；不传就现生成' },
+        duration: { type: 'number', description: '歌曲时长秒数，默认 60' },
+        shotCount: { type: 'number', description: '镜头数' },
+        style: { type: 'string', description: '曲风（英文更稳）' },
+        lyrics: { type: 'string', description: '歌词（带 [Verse]/[Chorus]）' },
+        song: { type: 'string', description: '用现成的歌：本机绝对路径或 ComfyUI input 里的文件名' },
+        heroImage: { type: 'string', description: '主角定妆图：本机绝对路径或 ComfyUI input 文件名；不给就自动生成' },
+        aspectRatio: { type: 'string', description: '画面比例，默认 16:9 (Widescreen)' },
+        megapixels: { type: 'number', description: '每镜像素（百万），默认 0.4；显存紧张就降' },
+        seed: { type: 'number', description: '镜头种子基准' },
+        host: { type: 'string', description: 'ComfyUI 地址' },
+      },
+      required: [],
+    },
+    output: OUTPUT,
+    timeoutMs: 7200000,
+    async execute(args) {
+      const client = new ComfyClient(args.host || DEFAULT_HOST);
+      const alive = await client.alive();
+      if (alive === null) throw new Error('连不上 ComfyUI（默认 127.0.0.1:8188），请先启动它');
+      const params = { ...args };
+      const job = jobStore.create(params);
+      startJob(job, params);
+      return text([
+        `已排入后台任务 ${job.id}（整支 MV 要跑很久，务必用 mv_status 查）`,
+        `ComfyUI ${alive.version} · ${alive.device} · 空闲 ${alive.vramFreeGB} GB`,
+        args.song ? `用现成的歌：${args.song}` : '先出歌，再排分镜',
+        args.heroImage ? `定妆图：${args.heroImage}` : '定妆图自动生成',
+      ]);
+    },
+  });
+
+  tools.register({
+    name: 'mv_status',
+    description: '查看音乐 MV 任务进度（哪个阶段、第几个镜头、每镜用时、成品路径），或列出最近的任务。',
+    parameters: {
+      type: 'object',
+      properties: { id: { type: 'string', description: '任务 id；不传则列出最近的' } },
+    },
+    output: OUTPUT,
+    async execute(args) {
+      const id = String(args.id || '');
+      if (id) {
+        const job = jobStore.get(id);
+        if (!job) throw new Error('没有这个任务：' + id);
+        const done = (job.shots || []).filter((s) => s.status === 'done').length;
+        return text([
+          `${job.id} · ${job.status} · ${job.stageLabel || job.stage}${job.elapsedSeconds ? ` · ${job.elapsedSeconds}s` : ''}`,
+          job.plan ? `《${job.plan.title}》 ${job.plan.duration}s · ${job.plan.shotCount} 镜` : '',
+          job.total ? `镜头 ${done}/${job.total}${job.currentShot != null ? `（正在跑第 ${job.currentShot + 1} 个）` : ''}` : '',
+          ...(job.shots || []).map((s) => `  ${s.index + 1}. ${s.status}${s.elapsedSeconds ? ` ${s.elapsedSeconds}s` : ''}${s.error ? ' — ' + s.error : ''}`),
+          job.error ? `失败：${job.error}` : '',
+          job.file ? `成品：${job.file}` : '',
+        ]);
+      }
+      const list = jobStore.list(10);
+      if (list.length === 0) return text(['还没有 MV 任务']);
+      return text(list.map((job) => `· ${job.id} ${job.status} ${job.stageLabel || ''}${job.plan ? ` 《${job.plan.title}》` : ''}${job.error ? ' — ' + job.error : ''}`));
+    },
+  });
+
+  tools.register({
+    name: 'mv_stitch',
+    description: '只做拼接：把若干段视频按顺序接起来，音轨换成给的整首歌（覆盖各段自带音频），输出 mp4。',
+    parameters: {
+      type: 'object',
+      properties: {
+        clips: { type: 'array', items: { type: 'string' }, description: '视频片段：ComfyUI input 里的文件名或本机绝对路径' },
+        audio: { type: 'string', description: '整首歌：ComfyUI input 里的文件名或本机绝对路径' },
+        filenamePrefix: { type: 'string', description: '输出文件名前缀，默认 video/MV' },
+        host: { type: 'string', description: 'ComfyUI 地址' },
+      },
+      required: ['clips', 'audio'],
+    },
+    output: OUTPUT,
+    timeoutMs: 1800000,
+    async execute(args) {
+      const client = new ComfyClient(args.host || DEFAULT_HOST);
+      const clips = [];
+      for (const raw of args.clips || []) {
+        const name = await ensureComfyFile(client, raw, 'video');
+        if (name) clips.push(name);
+      }
+      const audio = await ensureComfyFile(client, args.audio, 'audio');
+      if (clips.length === 0 || !audio) throw new Error('clips 和 audio 都不能为空');
+      const graph = buildStitchPrompt({ clips, audio, filenamePrefix: args.filenamePrefix || 'video/MV' });
+      const promptId = await client.submit(graph);
+      const entry = await client.wait(promptId, 1800000);
+      const { buffer } = await fetchVideo(client, entry);
+      const file = await saveVideo(DATA_DIR, 'stitch_' + Date.now().toString(36) + '.mp4', buffer);
+      return text([
+        `拼好了：${clips.length} 段 + 1 条音轨`,
+        `文件：${file}（${(buffer.length / 1024 / 1024).toFixed(1)} MB）`,
+      ]);
+    },
+  });
+
+  /* ------------------- 路由 ------------------- */
+
+  ctx.inject(['webServer'], (webCtx) => {
+    const webServer = webCtx.get('webServer');
+    if (webServer === undefined) return;
+
+    disposers.push(webServer.register({
+      kind: 'exact',
+      path: '/api/comfyui-music-mv/meta',
+      handler: async (_request, response) => {
+        try {
+          sendJson(response, 200, await meta());
+        } catch (error) {
+          sendJson(response, 500, { error: 'meta_failed', message: String((error && error.message) || error) });
+        }
+      },
+    }));
+
+    disposers.push(webServer.register({
+      kind: 'exact',
+      path: '/api/comfyui-music-mv/plan',
+      handler: async (request, response) => {
+        if (request.method !== 'POST') { sendJson(response, 405, { error: 'method_not_allowed' }); return; }
+        if (!sameOrigin(request)) { sendJson(response, 403, { error: 'forbidden: same-origin only' }); return; }
+        let body = null;
+        try { body = await readJsonBody(request); } catch { body = null; }
+        if (!body || !String(body.theme || '').trim()) {
+          sendJson(response, 400, { error: 'theme_required', message: '先写一个主题' });
+          return;
+        }
+        try {
+          const { plan, model } = await generatePlan(ctx, body);
+          sendJson(response, 200, { plan, model });
+        } catch (error) {
+          sendJson(response, 502, { error: 'plan_failed', message: friendlyError(error) });
+        }
+      },
+    }));
+
+    disposers.push(webServer.register({
+      kind: 'exact',
+      path: '/api/comfyui-music-mv/run',
+      handler: async (request, response) => {
+        if (request.method !== 'POST') { sendJson(response, 405, { error: 'method_not_allowed' }); return; }
+        if (!sameOrigin(request)) { sendJson(response, 403, { error: 'forbidden: same-origin only' }); return; }
+        let body = null;
+        try { body = await readJsonBody(request); } catch { body = null; }
+        if (!body) { sendJson(response, 400, { error: 'bad_body' }); return; }
+        const hasPlan = body.plan && typeof body.plan === 'object';
+        if (!hasPlan && !String(body.theme || '').trim()) {
+          sendJson(response, 400, { error: 'theme_or_plan_required', message: '要么给主题，要么给分镜表' });
+          return;
+        }
+        if (!body.song && !String(body.lyrics || '').trim()) {
+          sendJson(response, 400, { error: 'lyrics_required', message: '要现出歌就必须有歌词：先点「生成分镜」拿到歌词' });
+          return;
+        }
+        const params = { ...body };
+        const job = jobStore.create(params);
+        startJob(job, params);
+        sendJson(response, 202, { job: { id: job.id, status: job.status } });
+      },
+    }));
+
+    disposers.push(webServer.register({
+      kind: 'exact',
+      path: '/api/comfyui-music-mv/job',
+      handler: async (request, response) => {
+        const url = new URL(request.url, 'http://localhost');
+        const id = String(url.searchParams.get('id') || '');
+        const job = jobStore.get(id);
+        if (!job) { sendJson(response, 404, { error: 'not_found', id }); return; }
+        sendJson(response, 200, job);
+      },
+    }));
+
+    disposers.push(webServer.register({
+      kind: 'exact',
+      path: '/api/comfyui-music-mv/jobs',
+      handler: async (_request, response) => {
+        sendJson(response, 200, { jobs: jobStore.list(20) });
+      },
+    }));
+
+    disposers.push(webServer.register({
+      kind: 'exact',
+      path: '/api/comfyui-music-mv/upload',
+      handler: async (request, response) => {
+        if (request.method !== 'POST') { sendJson(response, 405, { error: 'method_not_allowed' }); return; }
+        if (!sameOrigin(request)) { sendJson(response, 403, { error: 'forbidden: same-origin only' }); return; }
+        try {
+          const client = new ComfyClient();
+          const files = await readUploads(request);
+          if (!files.length) { sendJson(response, 400, { error: 'no_file', message: '没有收到文件' }); return; }
+          const uploaded = [];
+          for (const file of files) {
+            const name = String(file.filename || 'upload.bin').replace(/^.*[\\/]/, '').replace(/[^\w.\-]+/g, '_');
+            const stored = await client.upload(file.data, name, file.mime || mimeOfName(name));
+            uploaded.push({ name: stored, bytes: file.data.length });
+          }
+          sendJson(response, 200, { files: uploaded });
+        } catch (error) {
+          sendJson(response, 500, { error: 'upload_failed', message: friendlyError(error) });
+        }
+      },
+    }));
+
+    /** 成品 / 单镜头 / 歌曲 统一走这里，支持 Range（视频要拖进度条）。 */
+    async function streamFile(request, response, file, mime) {
+      let buffer;
+      try { buffer = await fs.readFile(file); } catch { sendJson(response, 404, { error: 'file_missing' }); return; }
+      const size = buffer.length;
+      const base = { 'content-type': mime, 'accept-ranges': 'bytes', 'cache-control': 'private, max-age=3600' };
+      const match = request.headers && request.headers.range ? /bytes=(\d*)-(\d*)/.exec(request.headers.range) : null;
+      if (match) {
+        const start = match[1] ? Number(match[1]) : 0;
+        const end = match[2] ? Number(match[2]) : size - 1;
+        if (Number.isFinite(start) && Number.isFinite(end) && start <= end && start < size) {
+          const stop = Math.min(end, size - 1);
+          const chunk = buffer.subarray(start, stop + 1);
+          response.writeHead(206, { ...base, 'content-range': `bytes ${start}-${stop}/${size}`, 'content-length': String(chunk.length) });
+          response.end(chunk);
+          return;
+        }
+        response.writeHead(416, { 'content-range': `bytes */${size}` });
+        response.end();
+        return;
+      }
+      response.writeHead(200, { ...base, 'content-length': String(size) });
+      response.end(buffer);
+    }
+
+    disposers.push(webServer.register({
+      kind: 'exact',
+      path: '/api/comfyui-music-mv/media',
+      handler: async (request, response) => {
+        const url = new URL(request.url, 'http://localhost');
+        const id = String(url.searchParams.get('id') || '');
+        const job = jobStore.get(id);
+        if (!job || !job.file) { sendJson(response, 404, { error: 'not_found', id }); return; }
+        await streamFile(request, response, job.file, 'video/mp4');
+      },
+    }));
+
+    disposers.push(webServer.register({
+      kind: 'exact',
+      path: '/api/comfyui-music-mv/clip',
+      handler: async (request, response) => {
+        const url = new URL(request.url, 'http://localhost');
+        const id = String(url.searchParams.get('id') || '');
+        const index = Number(url.searchParams.get('index') || 0);
+        const job = jobStore.get(id);
+        const shot = job && Array.isArray(job.shots) ? job.shots.find((s) => s.index === index) : null;
+        if (!shot || !shot.file) { sendJson(response, 404, { error: 'not_found', id, index }); return; }
+        await streamFile(request, response, shot.file, 'video/mp4');
+      },
+    }));
+
+    disposers.push(webServer.register({
+      kind: 'exact',
+      path: '/api/comfyui-music-mv/song',
+      handler: async (request, response) => {
+        const url = new URL(request.url, 'http://localhost');
+        const id = String(url.searchParams.get('id') || '');
+        const job = jobStore.get(id);
+        if (!job || !job.song || !job.song.file) { sendJson(response, 404, { error: 'not_found', id }); return; }
+        const ext = path.extname(job.song.file).toLowerCase();
+        const mime = ext === '.flac' ? 'audio/flac' : ext === '.mp3' ? 'audio/mpeg' : 'audio/wav';
+        await streamFile(request, response, job.song.file, mime);
+      },
+    }));
+  });
+
+  ctx.effect(() => () => {
+    for (const dispose of disposers) dispose();
+  }, 'music-mv tools');
+}

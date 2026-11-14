@@ -1,0 +1,5 @@
+# Bundle patch layer for dsh-comfyui-music-mv
+- insert:
+    - id: comfyui-music-mv
+      name: 'dsh-comfyui-music-mv'
+      config: {}
