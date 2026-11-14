@@ -43,7 +43,11 @@ export async function scanModels(template, host = 'http://127.0.0.1:8188') {
     if (!spec) continue;
     const inputs = { ...(spec.input?.required || {}), ...(spec.input?.optional || {}) };
     for (const [field, def] of Object.entries(inputs)) {
-      const options = Array.isArray(def && def[0]) ? def[0] : null;
+      const options = Array.isArray(def && def[0])
+        ? def[0]
+        : (def && def[1] && Array.isArray(def[1].options)
+          ? def[1].options.map((o) => (o && typeof o === 'object' ? o.key : o))
+          : null);
       if (!options || options.length === 0) continue;
       const isLoaderField = LOADER_FIELDS.has(field);
       const looksLikeFile = options.some((o) => MODEL_EXT.test(String(o)));
