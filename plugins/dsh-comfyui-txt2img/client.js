@@ -234,7 +234,15 @@ window.__ModuleLoader__.load({
     function T2IPanel() {
       const [initial] = React.useState(function () { return loadForm(); });
       const [meta, setMeta] = React.useState(null);
-      const [modelValues, setModelValues] = React.useState({});
+      const [modelValues, setModelValues] = React.useState(function () {
+        try {
+          const raw = window.localStorage.getItem('comfyui-txt2img.models.v1');
+          const parsed = raw ? JSON.parse(raw) : null;
+          return parsed && typeof parsed === 'object' ? parsed : {};
+        } catch {
+          return {};
+        }
+      });
       const [metaError, setMetaError] = React.useState('');
       const [prompt, setPrompt] = React.useState((initial && initial.prompt) || '');
       const [cfg, setCfg] = React.useState(function () {
@@ -311,8 +319,14 @@ window.__ModuleLoader__.load({
         setModelValues(function (prev) {
           const next = { ...prev };
           next[node] = { ...(prev[node] || {}), [field]: value };
+          try { window.localStorage.setItem('comfyui-txt2img.models.v1', JSON.stringify(next)); } catch { /* 忽略 */ }
           return next;
         });
+      }
+
+      function resetModels() {
+        try { window.localStorage.removeItem('comfyui-txt2img.models.v1'); } catch { /* 忽略 */ }
+        setModelValues({});
       }
 
       async function generate() {
@@ -397,7 +411,13 @@ window.__ModuleLoader__.load({
                     style: { fontSize: '11px', maxWidth: '230px' },
                   }, m.options.map(function (o) { return h('option', { key: o, value: o }, o); }))
                 );
-              })
+              }),
+              h('button', {
+                className: 'cfl-chip',
+                style: { fontSize: '11px' },
+                title: '清掉手动选择，回到工作流模板里的默认模型',
+                onClick: resetModels,
+              }, '↺ 恢复默认')
             )
           : null),
         h('div', { style: { display: 'flex', alignItems: 'baseline', gap: '10px', flexWrap: 'wrap', marginBottom: '10px' } },
