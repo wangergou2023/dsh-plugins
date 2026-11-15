@@ -262,6 +262,10 @@ export function composeVideoPrompt(plan, shot, opts = {}) {
   const pics = [];
   if (opts.frameImage) pics.push('以 <Picture 1> 作为本镜的开场画面，人物、服装、场景、光线都与它一致');
   if (opts.heroImage) pics.push(opts.frameImage ? '<Picture 2> 是同一人物的身份参考' : '<Picture 1> 是同一人物的身份参考');
+  if (opts.audioRef) {
+    const line = shot.dialogue ? `，唱的歌词是「${shot.dialogue}」` : '';
+    pics.push(`<Audio 1> 是本镜要唱的那一段歌声，人物严格按 <Audio 1> 的音色与节奏开口对口型${line}`);
+  }
   const head = pics.length ? pics.join('；') + '。' : '';
   const move = (MOVES.find((m) => m.key === shot.move) || MOVES[0]).en;
   const light = (LIGHTS.find((l) => l.key === shot.light) || LIGHTS[0]).en;
@@ -269,7 +273,7 @@ export function composeVideoPrompt(plan, shot, opts = {}) {
     shot.action ? `${shot.action}。` : '',
     `镜头：${move}。`,
     `光线：${light}。`,
-    '人物表演自然连贯，口型随音乐起伏，画面稳定，不要文字、不要水印、不要字幕。',
+    '人物表演自然连贯，画面稳定，不要文字、不要水印、不要字幕。',
   ].filter(Boolean).join('');
   return head + body;
 }
@@ -282,6 +286,7 @@ export async function buildShotVideoPrompt(plan, shot, options = {}) {
   const promptText = composeVideoPrompt(plan, shot, {
     frameImage: options.frameImage,
     heroImage: options.heroImage,
+    audioRef: Array.isArray(options.audios) && options.audios.length > 0,
   });
   const built = await buildRef2vPrompt({
     prompt: promptText,
@@ -295,6 +300,49 @@ export async function buildShotVideoPrompt(plan, shot, options = {}) {
     refImageSize: options.refImageSize || 'match',
   });
   return { ...built, promptText };
+}
+
+/* --------------------------- 音频切片（对口型用） --------------------------- */
+
+/**
+ * 把整首歌按镜头时间轴切出一段，喂给模型当 <Audio 1> 的参考。
+ * 用的是 ComfyUI 自带的 TrimAudioDuration，不需要 ffmpeg：
+ *   LoadAudio → TrimAudioDuration(start_index, duration) → SaveAudioAdvanced(flac)
+ * 单元测试的坑：flac 不需要 format.quality，mp3/opus 才要。
+ */
+export function buildSliceAudioPrompt({ audio, start, duration, filenamePrefix = 'mv_slice' }) {
+  if (!audio) throw new Error('切片需要整首歌');
+  if (!(Number(duration) > 0)) throw new Error('切片时长必须大于 0');
+  return {
+    '1': { class_type: 'LoadAudio', inputs: { audio } },
+    '2': {
+      class_type: 'TrimAudioDuration',
+      inputs: { audio: ['1', 0], start_index: Math.max(0, Number(start) || 0), duration: Number(duration) },
+    },
+    '3': {
+      class_type: 'SaveAudioAdvanced',
+      inputs: { audio: ['2', 0], filename_prefix: filenamePrefix, format: 'flac' },
+    },
+  };
+}
+
+/** 取 history 里某个节点产出的音频并下载。 */
+export async function fetchComfyAudio(client, entry, nodeId) {
+  const items = [];
+  const nodes = nodeId ? [String(nodeId)] : Object.keys(entry.outputs || {});
+  for (const id of nodes) {
+    const output = (entry.outputs || {})[id];
+    if (!output) continue;
+    for (const item of output.audio || []) if (item && item.filename) items.push(item);
+  }
+  const item = items[0];
+  if (!item) throw new Error('切片没有产出音频');
+  const url = client.host + '/view?filename=' + encodeURIComponent(item.filename)
+    + '&subfolder=' + encodeURIComponent(item.subfolder || '')
+    + '&type=' + encodeURIComponent(item.type || 'output');
+  const res = await fetch(url, { signal: AbortSignal.timeout(120000) });
+  if (!res.ok) throw new Error('取回切片失败：HTTP ' + res.status);
+  return { buffer: Buffer.from(await res.arrayBuffer()), filename: item.filename };
 }
 
 /* --------------------------- 末帧衔接 --------------------------- */

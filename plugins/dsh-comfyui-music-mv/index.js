@@ -18,8 +18,8 @@ import { buildPrompt as buildSongPrompt, fetchAudio as fetchSongAudio, saveAudio
 import { buildPrompt as buildT2iPrompt } from './lib/t2i.js';
 import {
   LIMITS, audioDuration, buildFramePrompt, buildShotVideoPrompt, buildTailFramePrompt,
-  buildStitchPrompt, fetchVideo, fetchComfyImage, firstOutputImage, saveVideo, saveFrame,
-  normalizePlan, parsePlanJson, suggestShotCount,
+  buildSliceAudioPrompt, buildStitchPrompt, fetchVideo, fetchComfyImage, fetchComfyAudio,
+  firstOutputImage, saveVideo, saveFrame, normalizePlan, parsePlanJson, suggestShotCount,
 } from './lib/mv.js';
 import { vocab, cameraSummary } from './lib/shotlang.js';
 
@@ -376,6 +376,7 @@ async function renderShotVideo(client, job, plan, shot, options) {
   const built = await buildShotVideoPrompt(plan, shot, {
     frameImage: options.frameImage,
     heroImage: job.hero && job.hero.name,
+    audios: Array.isArray(options.audios) ? options.audios : [],
     aspectRatio: options.aspectRatio,
     megapixels: options.megapixels || 0.4,
     seed: options.seed,
@@ -414,6 +415,20 @@ async function extractTail(client, job, prevShot) {
     buffer,
   );
   return { name, file };
+}
+
+/** 把整首歌按这一镜的时间区间切一段，传进 input 当 <Audio 1>（对口型）。 */
+async function sliceShotAudio(client, job, songName, shot) {
+  const graph = buildSliceAudioPrompt({
+    audio: songName,
+    start: Math.max(0, Number(shot.start) || 0),
+    duration: Math.max(1, Number(shot.seconds) || 8),
+    filenamePrefix: `mv_slice/${job.id}_${shot.index + 1}`,
+  });
+  const promptId = await client.submit(graph);
+  const entry = await client.wait(promptId, 300000);
+  const { buffer } = await fetchComfyAudio(client, entry, '3');
+  return client.upload(buffer, `mvs_${job.id}_${shot.index + 1}_${Date.now().toString(36)}.flac`, 'audio/flac');
 }
 
 async function execute(job, params) {
@@ -620,7 +635,16 @@ async function execute(job, params) {
       await jobPatchShot(job.id, shot.index, { videoStatus: 'running', error: null, videoStartedAt: Date.now() });
       try {
         const live = job.shots.find((s) => s.index === shot.index) || shot;
-        const made = await renderShotVideo(client, job, plan, live, { ...opt, frameImage: frameName });
+        // 对口型：这一镜唱哪句歌词，就切哪一段歌喂给模型
+        let audios = [];
+        const wantSing = params.lipSync === true || (params.lipSync !== false && !!live.dialogue);
+        if (wantSing && songName) {
+          try {
+            const slice = await sliceShotAudio(client, job, songName, live);
+            if (slice) audios = [slice];
+          } catch { /* 切片失败就当无声镜头处理，不阻断整支 */ }
+        }
+        const made = await renderShotVideo(client, job, plan, live, { ...opt, frameImage: frameName, audios });
         await jobPatchShot(job.id, shot.index, {
           frame: frameName,
           video: made.file,

@@ -63,6 +63,7 @@ window.__ModuleLoader__.load({
       megapixels: 0.4,
       style: '',
       tailLink: true,
+      lipSync: true,
     };
 
     const small = { fontSize: '12px' };
@@ -177,6 +178,7 @@ window.__ModuleLoader__.load({
             aspectRatio: cfg.aspectRatio,
             megapixels: cfg.megapixels,
             tailLink: cfg.tailLink,
+            lipSync: cfg.lipSync ? 'auto' : false,
             phase,
           });
           setJob({ id: data.job.id, status: 'queued', plan, shots: [] });
@@ -383,6 +385,10 @@ window.__ModuleLoader__.load({
               h('label', { style: { display: 'flex', alignItems: 'center', gap: '5px', ...small } },
                 h('input', { type: 'checkbox', checked: cfg.tailLink, onChange: function (e) { setCfg(function (p) { return { ...p, tailLink: e.target.checked }; }); } }),
                 '末帧接龙'
+              ),
+              h('label', { title: '有歌词的镜头会把歌切一段喂给模型，让它按这段歌声对口型', style: { display: 'flex', alignItems: 'center', gap: '5px', ...small } },
+                h('input', { type: 'checkbox', checked: cfg.lipSync, onChange: function (e) { setCfg(function (p) { return { ...p, lipSync: e.target.checked }; }); } }),
+                '对口型'
               )
             )
           )
