@@ -22,6 +22,7 @@ import {
   firstOutputImage, saveVideo, saveFrame, normalizePlan, parsePlanJson, suggestShotCount,
 } from './lib/mv.js';
 import { vocab, cameraSummary } from './lib/shotlang.js';
+import { probeFfmpeg, stitchWithTransitions } from './lib/ffmpeg.js';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const DATA_DIR = process.env.DSH_MUSIC_MV_DATA || path.join(HERE, '.data');
@@ -432,6 +433,44 @@ async function sliceShotAudio(client, job, songName, shot) {
   return client.upload(buffer, `mvs_${job.id}_${shot.index + 1}_${Date.now().toString(36)}.flac`, 'audio/flac');
 }
 
+/**
+ * 出成品：能真转场就真转场（ffmpeg xfade），否则回退到 ComfyUI 硬切拼接。
+ * 两种路都保证音轨是整首歌、时长按歌长裁齐。
+ */
+async function buildFinal(client, job) {
+  const ordered = (job.shots || []).filter((s) => s.comfyVideo && s.video);
+  if (ordered.length === 0) throw new Error('没有可拼接的镜头视频');
+  const cuts = ordered.slice(0, -1).map((s) => s.transition || 'cut');
+  const songDur = Number(job.song && job.song.duration) || 0;
+  const wantXfade = cuts.some((t) => t && t !== 'cut');
+  const ff = wantXfade ? await probeFfmpeg(HERE) : { ok: false };
+
+  if (ff.ok) {
+    const outFile = path.join(DATA_DIR, 'mv', job.id + '.mp4');
+    const res = await stitchWithTransitions({
+      pluginDir: HERE,
+      clips: ordered.map((s) => ({ file: s.video, duration: Number(s.videoDuration) || Number(s.seconds) || 10 })),
+      transitions: cuts,
+      audioFile: job.song.file,
+      totalSeconds: songDur,
+      outFile,
+    });
+    return { buffer: await fs.readFile(res.file), file: res.file, mode: 'ffmpeg · 真转场 xfade' };
+  }
+
+  const graph = buildStitchPrompt({
+    clips: ordered.map((s) => s.comfyVideo),
+    audio: job.song && job.song.name,
+    filenamePrefix: 'video/MV_' + job.id,
+    trimSeconds: songDur,
+  });
+  const promptId = await client.submit(graph);
+  const entry = await client.wait(promptId, 1800000);
+  const { buffer } = await fetchVideo(client, entry, { nodeId: '2002' });
+  const file = await saveVideo(DATA_DIR, job.id + '.mp4', buffer);
+  return { buffer, file, mode: 'ComfyUI · 硬切拼接' };
+}
+
 async function execute(job, params) {
   const client = new ComfyClient(params.host || DEFAULT_HOST);
   const alive = await client.alive();
@@ -668,25 +707,15 @@ async function execute(job, params) {
 
   /* 7. 拼接 + 压曲 */
   await jobPatch(job.id, { stage: 'stitch', stageLabel: '拼接并压上原曲' });
-  const clips = job.shots.map((s) => s.comfyVideo).filter(Boolean);
-  if (clips.length === 0) throw new Error('没有可拼接的镜头视频');
-  const graph = buildStitchPrompt({
-    clips,
-    audio: songName,
-    filenamePrefix: 'video/MV_' + job.id,
-    trimSeconds: songDuration,
-  });
-  const promptId = await client.submit(graph);
-  const entry = await client.wait(promptId, 1800000);
-  const { buffer: finalBuffer } = await fetchVideo(client, entry, { nodeId: '2002' });
-  const finalFile = await saveVideo(DATA_DIR, job.id + '.mp4', finalBuffer);
+  const final = await buildFinal(client, job);
 
   await jobPatch(job.id, {
     status: 'done',
     stage: 'done',
     stageLabel: '完成',
-    file: finalFile,
-    bytes: finalBuffer.length,
+    file: final.file,
+    bytes: final.buffer.length,
+    stitchMode: final.mode,
     mediaUrl: '/api/comfyui-music-mv/media?id=' + job.id,
     elapsedSeconds: Math.round((Date.now() - job.createdAt) / 1000),
   });
@@ -745,9 +774,11 @@ export function apply(ctx) {
     } catch (error) {
       probe.error = String((error && error.message) || error);
     }
+    const ff = await probeFfmpeg(HERE);
     return {
       limits: LIMITS,
       aspects: ASPECTS,
+      ffmpeg: ff.ok ? { ok: true, version: ff.version } : { ok: false, error: ff.error },
       defaults: { duration: 60, aspectRatio: '16:9 (Widescreen)', megapixels: 0.4, shotSeconds: 8, songFormat: 'flac' },
       stages: [
         { key: 'plan', label: '写剧本' },
@@ -1173,22 +1204,15 @@ export function apply(ctx) {
         await jobStore.refresh();
         const job = jobStore.get(id);
         if (!job) { sendJson(response, 404, { error: 'not_found', id }); return; }
-        const clips = (job.shots || []).map((s) => s.comfyVideo).filter(Boolean);
-        if (clips.length === 0) { sendJson(response, 400, { error: 'no_clips' }); return; }
+        if (!(job.shots || []).some((s) => s.comfyVideo && s.video)) { sendJson(response, 400, { error: 'no_clips' }); return; }
         try {
           const client = new ComfyClient();
-          const graph = buildStitchPrompt({
-            clips,
-            audio: job.song && job.song.name,
-            filenamePrefix: 'video/MV_' + job.id + '_' + Date.now().toString(36),
-            trimSeconds: job.song && job.song.duration,
+          const out = await buildFinal(client, job);
+          await jobStore.patch(id, {
+            status: 'done', stage: 'done', stageLabel: '完成',
+            file: out.file, bytes: out.buffer.length, stitchMode: out.mode,
           });
-          const promptId = await client.submit(graph);
-          const entry = await client.wait(promptId, 1800000);
-          const { buffer } = await fetchVideo(client, entry, { nodeId: '2002' });
-          const file = await saveVideo(DATA_DIR, job.id + '.mp4', buffer);
-          await jobStore.patch(id, { status: 'done', stage: 'done', stageLabel: '完成', file, bytes: buffer.length });
-          sendJson(response, 200, { ok: true, file });
+          sendJson(response, 200, { ok: true, file: out.file, mode: out.mode });
         } catch (error) {
           sendJson(response, 500, { error: 'stitch_failed', message: friendlyError(error) });
         }

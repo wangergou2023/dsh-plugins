@@ -478,7 +478,16 @@ window.__ModuleLoader__.load({
             online ? 'ComfyUI ' + meta.comfyui.version + (vram !== null ? ' · 空闲 ' + vram + ' GB' : '')
               : metaError ? '状态未知：' + metaError
               : !meta ? '正在连接…' : 'ComfyUI 离线'),
-          online ? null : h('button', { className: 'cfl-chip', style: { fontSize: '11px' }, onClick: function () { loadMeta(0); } }, '重试')
+          online ? null : h('button', { className: 'cfl-chip', style: { fontSize: '11px' }, onClick: function () { loadMeta(0); } }, '重试'),
+          h('span', {
+            style: {
+              fontSize: '11px', padding: '2px 8px', borderRadius: '999px',
+              border: '1px solid ' + (meta && meta.ffmpeg && meta.ffmpeg.ok ? 'rgba(90,190,140,0.6)' : 'rgba(128,128,128,0.3)'),
+              color: meta && meta.ffmpeg && meta.ffmpeg.ok ? '#5abe8c' : undefined,
+              opacity: meta && meta.ffmpeg && meta.ffmpeg.ok ? 1 : 0.6,
+            },
+            title: meta && meta.ffmpeg && meta.ffmpeg.ok ? String(meta.ffmpeg.version || '已检测到 ffmpeg') : '没找到 ffmpeg：镜头之间只能硬切',
+          }, meta && meta.ffmpeg && meta.ffmpeg.ok ? '转场可用' : '转场不可用（硬切）')
         ),
         h('div', { style: { ...muted, marginTop: '2px' } }, '主题 → 剧本 → 出歌 → 定妆 → 每镜静帧（可改可重 roll）→ 末帧接龙出视频 → 拼成一支 MV'),
         stepper,
@@ -546,7 +555,8 @@ window.__ModuleLoader__.load({
                     h('video', { src: '/api/comfyui-music-mv/media?id=' + encodeURIComponent(job.id) + '&v=' + bust, controls: true, style: { width: '100%', maxWidth: '760px', borderRadius: '8px' } }),
                     h('div', { style: { ...small, marginTop: '4px' } },
                       h('a', { href: '/api/comfyui-music-mv/media?id=' + encodeURIComponent(job.id), target: '_blank', rel: 'noreferrer' }, '打开原文件'),
-                      h('button', { className: 'cfl-chip', style: { fontSize: '11px', marginLeft: '8px' }, disabled: !!busy, onClick: restitch }, '重新合成')
+                      h('button', { className: 'cfl-chip', style: { fontSize: '11px', marginLeft: '8px' }, disabled: !!busy, onClick: restitch }, '重新合成'),
+                      job.stitchMode ? h('span', { style: { ...muted, marginLeft: '8px' } }, job.stitchMode) : null
                     )
                   )
                 : null

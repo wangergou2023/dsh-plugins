@@ -73,10 +73,35 @@ LoadAudio(整首) → TrimAudioDuration(start_index, duration) → SaveAudioAdva
 提示词里写「严格按 <Audio 1> 的歌声对口型，唱的是『那句歌词』」。
 成品音轨仍然用整首歌压一次，所以切片再准也不会把多段人声拼错。
 
+## 转场（可选 ffmpeg）
+
+分镜表里每镜的 `transition` 字段现在会真的执行：`cut / dissolve / fade / whip / match`。
+执行它需要 ffmpeg，插件按下面的顺序找，找到就启用、找不到就退回硬切（不报错）：
+
+```
+$DSH_MV_FFMPEG   →   <插件>/.data/bin/ffmpeg.exe
+                 →   ~/Documents/LocalMiniDrama/backend-node/tools/ffmpeg/ffmpeg.exe
+                 →   PATH
+```
+
+拼接命令是 `xfade` 链：
+
+```
+[0:v][1:v]xfade=transition=fade:duration=0.6:offset=9.53[v1]
+[v1][2:v]xfade=transition=fadeblack:duration=0.8:offset=18.85[v2] ...
+[vx]tpad=stop_mode=clone:stop_duration=2.76[vout]   ← 补回被 overlap 吃掉的时长
+-map [vout] -map N:a -c:v libx264 -crf 20 -c:a aac -t <歌长>
+```
+
+xfade 每接一次就少一个 overlap，所以必须用 `tpad` 补回、再用 `-t` 裁齐，
+否则会出现「画面 58.6 秒、声音 60 秒」的尾巴没画面。
+
+没有 ffmpeg 时走 ComfyUI 的 `ConcatenateVideo`，硬切 + 原曲，同样按歌长裁齐。
+
 ## 已知限制
 
 - 对口型只保证"嘴型跟着这段歌声走"，不能保证逐字精确。
 - 单镜 5–15 秒；60 秒约 6–8 镜，16 GB 显存整支可能一小时。
-- `transition` 字段目前只入库、不执行；段间一律硬切（接龙让切点无缝，但没有叠化/甩镜）。
+- 转场依赖 ffmpeg；没有它时 `transition` 字段只入库，段间一律硬切。
 - 只支持 flac / mp3 读时长（flac 精确，mp3 按首帧比特率估算）。
-- 全片必须同一比例/像素，否则拼接会重编码甚至失败。
+- 全片必须同一比例/像素，否则转场/拼接会失败或重编码。
