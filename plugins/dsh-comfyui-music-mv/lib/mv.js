@@ -270,7 +270,7 @@ export function composeVideoPrompt(plan, shot, opts = {}) {
   const move = (MOVES.find((m) => m.key === shot.move) || MOVES[0]).en;
   const light = (LIGHTS.find((l) => l.key === shot.light) || LIGHTS[0]).en;
   const body = [
-    shot.action ? `${shot.action}。` : '',
+    shot.action ? `${shot.action.replace(/[。.]\s*$/, '')}。` : '',
     `镜头：${move}。`,
     `光线：${light}。`,
     '人物表演自然连贯，画面稳定，不要文字、不要水印、不要字幕。',

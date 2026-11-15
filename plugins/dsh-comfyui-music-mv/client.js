@@ -35,12 +35,12 @@ window.__ModuleLoader__.load({
     ];
 
     const STEPS = [
-      ['plan', '剧本'],
-      ['song', '出歌'],
-      ['hero', '定妆'],
-      ['frames', '静帧'],
-      ['videos', '视频'],
-      ['stitch', '合成'],
+      { key: 'plan', label: '剧本' },
+      { key: 'song', label: '出歌' },
+      { key: 'hero', label: '定妆' },
+      { key: 'frames', label: '静帧' },
+      { key: 'videos', label: '视频' },
+      { key: 'stitch', label: '合成' },
     ];
 
     const FORM_KEY = 'comfyui-music-mv.form.v2';
@@ -491,6 +491,13 @@ window.__ModuleLoader__.load({
                 }) : null
               ),
               job.error ? h('div', { style: { color: '#e05c5c', fontSize: '12px', marginTop: '4px' } }, job.error) : null,
+
+              // 从历史里点回来时，本地没有 plan 状态，这里给一份只读的剧本摘要
+              job.plan && !plan
+                ? h('div', { style: { ...small, marginTop: '6px', opacity: 0.8 } },
+                    '《' + (job.plan.title || '未命名') + '》',
+                    job.plan.story && job.plan.story.logline ? ' · ' + job.plan.story.logline : '')
+                : null,
 
               timelineStrip(job.shots, job.plan && job.plan.duration),
 
