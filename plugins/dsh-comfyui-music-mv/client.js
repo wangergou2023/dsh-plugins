@@ -180,7 +180,7 @@ window.__ModuleLoader__.load({
             aspectRatio: cfg.aspectRatio,
             megapixels: cfg.megapixels,
             tailLink: cfg.tailLink,
-            lipSync: cfg.lipSync ? 'auto' : false,
+            lipSync: cfg.lipSync,
             phase,
           });
           setJob({ id: data.job.id, status: 'queued', plan, shots: [] });
@@ -243,6 +243,38 @@ window.__ModuleLoader__.load({
       }
 
       function patchPlan(patch) { setPlan(function (p) { return p ? { ...p, ...patch } : p; }); }
+
+      function exportPlan() {
+        if (!job) { setError('这个任务还没生成方案，导不了'); return; }
+        window.open('/api/comfyui-music-mv/export?id=' + encodeURIComponent(job.id), '_blank');
+      }
+
+      function importPlan() {
+        const input = document.createElement('input');
+        input.type = 'file';
+        input.accept = 'application/json,.json';
+        input.onchange = async function () {
+          const file = input.files && input.files[0];
+          if (!file) return;
+          setError('');
+          try {
+            const data = await post('/api/comfyui-music-mv/import', { project: JSON.parse(await file.text()) });
+            setPlan(data.plan);
+            const p = data.params || {};
+            setCfg(function (prev) {
+              const next = { ...prev };
+              if (p.aspectRatio) next.aspectRatio = p.aspectRatio;
+              if (typeof p.megapixels === 'number') next.megapixels = p.megapixels;
+              if (typeof p.tailLink === 'boolean') next.tailLink = p.tailLink;
+              if (typeof p.lipSync === 'boolean') next.lipSync = p.lipSync;
+              return next;
+            });
+          } catch (err) {
+            setError(String((err && err.message) || err));
+          }
+        };
+        input.click();
+      }
 
       function num(labelText, key, min, max, step) {
         return h('label', { key: key, style: { display: 'flex', flexDirection: 'column', gap: '2px', ...small } },
@@ -425,6 +457,8 @@ window.__ModuleLoader__.load({
               h('button', { className: 'cfl-chip', style: { fontWeight: 600 }, disabled: !!busy || running, onClick: function () { startRun('frames'); } }, '① 出歌 + 定妆 + 静帧'),
               job && job.status === 'paused' ? h('button', { className: 'cfl-chip', style: { fontWeight: 600 }, disabled: !!busy, onClick: function () { continueRun('videos'); } }, '② 出视频 + 合成') : null,
               h('button', { className: 'cfl-chip', disabled: !!busy || running, onClick: function () { startRun('all'); } }, '一键到底'),
+              h('button', { className: 'cfl-chip', disabled: !job, title: '把剧本和参数存成 json', onClick: exportPlan }, '⇩ 导出方案'),
+              h('button', { className: 'cfl-chip', title: '导入之前导出的方案', onClick: importPlan }, '⇧ 导入'),
               h('label', { style: { display: 'flex', alignItems: 'center', gap: '5px', ...small } },
                 h('input', { type: 'checkbox', checked: cfg.tailLink, onChange: function (e) { setCfg(function (p) { return { ...p, tailLink: e.target.checked }; }); } }),
                 '末帧接龙'
@@ -468,7 +502,8 @@ window.__ModuleLoader__.load({
               onChange: function (e) { setCfg(function (p) { return { ...p, aspectRatio: e.target.value }; }); },
             }, ASPECTS.map(function (a) { return h('option', { key: a[0], value: a[0] }, a[1]); }))),
           h('button', { className: 'cfl-chip', style: { fontWeight: 600 }, disabled: !!busy || running, onClick: makePlan },
-            busy === '正在写剧本…' ? '写剧本中…' : '🎬 生成剧本')
+            busy === '正在写剧本…' ? '写剧本中…' : '🎬 生成剧本'),
+          h('button', { className: 'cfl-chip', title: '导入之前导出的方案 json', onClick: importPlan }, '⇧ 导入方案')
         ),
 
         error ? h('div', { style: { color: '#e05c5c', fontSize: '13px', marginTop: '8px' } }, error) : null,

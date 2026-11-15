@@ -293,7 +293,7 @@ function planSystemPrompt(shotCount, duration) {
     '    "dof": "景深：extreme_shallow|shallow|medium|deep",',
     '    "transition": "怎么接下一镜：cut|dissolve|match|whip|fade",',
     '    "action": "人物在这一镜做什么，具体到身体动作与表情；不写歌词、不写镜头参数",',
-    '    "dialogue": "这一镜要对口型唱的那一句歌词（可留空）"',
+    '    "dialogue": "这一镜要张口唱的那一句歌词（必须从歌词里原样摘一句）"',
     '  }]',
     '}',
     '',
@@ -303,9 +303,10 @@ function planSystemPrompt(shotCount, duration) {
     '3. 分镜必须服务故事：镜头顺序就是情绪推进顺序；主角从开头到结尾要有变化。',
     '4. 景别必须有节奏地变化，不要连着三镜都是中景；运镜一镜只用一种。',
     '5. action 只写画面：人物动作、表情、与环境的关系。绝对不能写歌词、字幕、文字、水印。',
-    '6. 主角始终是同一个人（脸、发型、服装不变），可以换环境、换景别、换机位。',
-    '7. 不要出现「四视图」「多视角」「分屏」「拼图」这类排版词。',
-    '8. 歌词要能唱：副歌重复、句子短、押韵。',
+    '6. dialogue 必须填：从你写的 lyrics 里原样摘一句当这一镜对口型唱的词（纯环境空镜才可以留空）。',
+    '7. 主角始终是同一个人（脸、发型、服装不变），可以换环境、换景别、换机位。',
+    '8. 不要出现「四视图」「多视角」「分屏」「拼图」这类排版词。',
+    '9. 歌词要能唱：副歌重复、句子短、押韵。',
   ].join('\n');
 }
 
@@ -1089,6 +1090,73 @@ export function apply(ctx) {
         for (const key of allowed) if (patch[key] !== undefined) clean[key] = patch[key];
         await jobStore.patchShot(id, index, clean);
         sendJson(response, 200, { ok: true, shot: (jobStore.get(id).shots || []).find((s) => s.index === index) });
+      },
+    }));
+
+    /** 导出方案：剧本 + 参数存成一个 json，下次直接导回来（不用把整支 MV 重跑才能复用）。 */
+    disposers.push(webServer.register({
+      kind: 'exact',
+      path: '/api/comfyui-music-mv/export',
+      handler: async (request, response) => {
+        const url = new URL(request.url, 'http://localhost');
+        const id = String(url.searchParams.get('id') || '');
+        await jobStore.refresh();
+        const job = jobStore.get(id);
+        if (!job || !job.plan) { sendJson(response, 404, { error: 'not_found', id }); return; }
+        const project = {
+          kind: 'mv-project',
+          version: 1,
+          exportedAt: new Date().toISOString(),
+          plan: job.plan,
+          params: {
+            aspectRatio: job.params.aspectRatio,
+            megapixels: job.params.megapixels,
+            tailLink: job.params.tailLink,
+            lipSync: job.params.lipSync,
+            seed: job.params.seed,
+          },
+        };
+        const safe = String(job.plan.title || 'mv').replace(/[\\/:*?"<>|]+/g, '_').slice(0, 40);
+        // 头部值只能是 ASCII：中文名放进 filename*（RFC 5987），别直接塞进 filename="..."
+        const asciiName = safe.replace(/[^\x20-\x7E]+/g, '_') || 'mv';
+        const body = JSON.stringify(project, null, 2);
+        try {
+          response.writeHead(200, {
+            'content-type': 'application/json; charset=utf-8',
+            'content-disposition': `attachment; filename="${asciiName}.json"; filename*=UTF-8''${encodeURIComponent(safe + '.json')}`,
+            'content-length': String(Buffer.byteLength(body)),
+          });
+          response.end(body);
+        } catch (error) {
+          sendJson(response, 500, { error: 'export_failed', message: String((error && error.message) || error) });
+        }
+      },
+    }));
+
+    /** 导入方案：校验并规整后返回给面板，不直接开跑。 */
+    disposers.push(webServer.register({
+      kind: 'exact',
+      path: '/api/comfyui-music-mv/import',
+      handler: async (request, response) => {
+        if (request.method !== 'POST') { sendJson(response, 405, { error: 'method_not_allowed' }); return; }
+        if (!sameOrigin(request)) { sendJson(response, 403, { error: 'forbidden: same-origin only' }); return; }
+        let body = null;
+        try { body = await readJsonBody(request); } catch { body = null; }
+        const project = body && (body.project || body);
+        const planSrc = project && (project.plan || project);
+        if (!planSrc || !Array.isArray(planSrc.shots)) {
+          sendJson(response, 400, { error: 'bad_project', message: '这不是一个 MV 方案文件（缺 shots）' });
+          return;
+        }
+        try {
+          const plan = normalizePlan(planSrc, {
+            duration: planSrc.duration,
+            shotCount: planSrc.shots.length,
+          });
+          sendJson(response, 200, { plan, params: (project && project.params) || {} });
+        } catch (error) {
+          sendJson(response, 400, { error: 'bad_project', message: friendlyError(error) });
+        }
       },
     }));
 
