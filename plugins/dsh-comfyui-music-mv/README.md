@@ -11,7 +11,8 @@
  ├─ 出歌     YuE2 3B          → flac（读 STREAMINFO 得精确总长）
  ├─ 定妆图   Krea2 Turbo      → 1 张主角图，全片复用，锁人物身份
  ├─ 静帧     Krea2 Turbo      → 每镜一张电影剧照【可单镜重 roll、可改参数、有版本历史】
- ├─ 视频     MiniMax H3       → 首帧=静帧，身份=定妆图；下一镜可用上一镜末帧当首帧（末帧接龙）
+ ├─ 视频     MiniMax H3       → 首帧=静帧，身份=定妆图，歌声=<Audio 1> 切片（对口型）
+ │                              下一镜可用上一镜末帧当首帧（末帧接龙）
  └─ 合成     ConcatenateVideo → 接成整支 + 压上原曲 + 按歌长裁齐
 ```
 
@@ -53,9 +54,20 @@ slow push-in dolly · dramatic side lighting · shallow depth of field
 | `mv_status` | 查进度：阶段、每镜静帧/视频状态、成品路径 |
 | `mv_stitch` | 只拼接：N 段视频 + 1 条音轨 → mp4（`trimSeconds` 裁到歌长） |
 
+## 对口型
+
+有台词的镜头会把整首歌按该镜的时间区间切一段，当 `<Audio 1>` 喂给 H3：
+
+```
+LoadAudio(整首) → TrimAudioDuration(start_index, duration) → SaveAudioAdvanced(flac)
+```
+
+提示词里写「严格按 <Audio 1> 的歌声对口型，唱的是『那句歌词』」。
+成品音轨仍然用整首歌压一次，所以切片再准也不会把多段人声拼错。
+
 ## 已知限制
 
-- **没有对口型**：镜头不接音频参考，嘴型与歌词不同步。
+- 对口型只保证"嘴型跟着这段歌声走"，不能保证逐字精确。
 - 单镜 5–15 秒；60 秒约 6–8 镜，16 GB 显存整支可能一小时。
 - `transition` 字段目前只入库、不执行；段间一律硬切（接龙让切点无缝，但没有叠化/甩镜）。
 - 只支持 flac / mp3 读时长（flac 精确，mp3 按首帧比特率估算）。

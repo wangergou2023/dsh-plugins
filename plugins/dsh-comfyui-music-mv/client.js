@@ -97,6 +97,8 @@ window.__ModuleLoader__.load({
       const [error, setError] = React.useState('');
       const [openShot, setOpenShot] = React.useState(null);
       const [bust, setBust] = React.useState(0);
+      const [nowTime, setNowTime] = React.useState(0);
+      const audioRef = React.useRef(null);
 
       React.useEffect(function () {
         try { window.localStorage.setItem(FORM_KEY, JSON.stringify({ cfg, plan })); } catch { /* ignore */ }
@@ -279,6 +281,47 @@ window.__ModuleLoader__.load({
         })
       );
 
+      /* ---------------- 时间轴带 ---------------- */
+      function timelineStrip(jobShots, totalSeconds) {
+        if (!jobShots || !jobShots.length) return null;
+        const total = Number(totalSeconds) || jobShots.reduce(function (a, s) { return a + (Number(s.seconds) || 0); }, 0) || 1;
+        return h('div', {
+          style: {
+            display: 'flex', gap: '2px', height: '46px', marginTop: '10px',
+            borderRadius: '8px', overflow: 'hidden', border: '1px solid rgba(128,128,128,0.25)',
+          },
+        }, jobShots.map(function (shot) {
+          const w = ((Number(shot.seconds) || 1) / total) * 100;
+          const active = nowTime >= (Number(shot.start) || 0) && nowTime < (Number(shot.end) || 0);
+          const url = job && shot.frameFile
+            ? '/api/comfyui-music-mv/frame-img?id=' + encodeURIComponent(job.id) + '&index=' + shot.index + '&v=' + bust
+            : null;
+          return h('div', {
+            key: shot.index,
+            title: (shot.index + 1) + '. ' + (shot.label || '') + ' ' + shot.start + '-' + shot.end + 's',
+            style: {
+              flex: '0 0 ' + w + '%', position: 'relative', cursor: 'pointer',
+              backgroundImage: url ? 'url("' + url + '")' : 'none',
+              backgroundSize: 'cover', backgroundPosition: 'center',
+              backgroundColor: 'rgba(0,0,0,0.35)',
+              outline: active ? '2px solid #7ab0ff' : 'none', outlineOffset: '-2px',
+              opacity: shot.videoStatus === 'done' ? 1 : 0.7,
+            },
+            onClick: function () {
+              const el = audioRef.current;
+              if (el) { try { el.currentTime = Number(shot.start) || 0; el.play(); } catch { /* ignore */ } }
+            },
+          },
+            h('div', {
+              style: {
+                position: 'absolute', left: '4px', bottom: '2px', fontSize: '10px', color: '#fff',
+                textShadow: '0 1px 2px rgba(0,0,0,0.9)',
+              },
+            }, String(shot.index + 1))
+          );
+        }));
+      }
+
       /* ---------------- 分镜卡片 ---------------- */
       function shotCard(shot) {
         const open = openShot === shot.index;
@@ -439,9 +482,17 @@ window.__ModuleLoader__.load({
                 h('span', { style: { fontSize: '13px', fontWeight: 600 } }, job.id),
                 h('span', { style: small }, job.status + (job.stageLabel ? ' · ' + job.stageLabel : '')),
                 job.song && job.song.duration ? h('span', { style: muted }, '歌 ' + Math.round(job.song.duration) + 's') : null,
-                job.song && job.song.file ? h('audio', { src: '/api/comfyui-music-mv/song?id=' + encodeURIComponent(job.id) + '&v=' + bust, controls: true, style: { height: '30px', maxWidth: '320px' } }) : null
+                job.song && job.song.file ? h('audio', {
+                  ref: audioRef,
+                  src: '/api/comfyui-music-mv/song?id=' + encodeURIComponent(job.id) + '&v=' + bust,
+                  controls: true,
+                  onTimeUpdate: function (e) { setNowTime(e.target.currentTime); },
+                  style: { height: '30px', maxWidth: '320px' },
+                }) : null
               ),
               job.error ? h('div', { style: { color: '#e05c5c', fontSize: '12px', marginTop: '4px' } }, job.error) : null,
+
+              timelineStrip(job.shots, job.plan && job.plan.duration),
 
               job.shots && job.shots.length
                 ? h('div', { style: { display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))', gap: '10px', marginTop: '10px' } },
