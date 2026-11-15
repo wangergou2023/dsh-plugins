@@ -17,9 +17,11 @@ import { applyModelOverrides } from './lib/models.js';
 import { buildPrompt as buildSongPrompt, fetchAudio as fetchSongAudio, saveAudio } from './lib/music.js';
 import { buildPrompt as buildT2iPrompt } from './lib/t2i.js';
 import {
-  LIMITS, audioDuration, buildShotPrompt, buildStitchPrompt, fetchVideo, saveVideo,
+  LIMITS, audioDuration, buildFramePrompt, buildShotVideoPrompt, buildTailFramePrompt,
+  buildStitchPrompt, fetchVideo, fetchComfyImage, firstOutputImage, saveVideo, saveFrame,
   normalizePlan, parsePlanJson, suggestShotCount,
 } from './lib/mv.js';
+import { vocab, cameraSummary } from './lib/shotlang.js';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const DATA_DIR = process.env.DSH_MUSIC_MV_DATA || path.join(HERE, '.data');
@@ -193,14 +195,31 @@ class JobStore {
   constructor(dataDir) {
     this.file = path.join(dataDir, 'mv-jobs.json');
     this.jobs = new Map();
+    this.mtime = 0;
     this.ready = this.load();
   }
 
-  async load() {
+  async load(clear = false) {
     try {
       const list = JSON.parse(await fs.readFile(this.file, 'utf8'));
-      if (Array.isArray(list)) for (const job of list) this.jobs.set(job.id, job);
+      if (!Array.isArray(list)) return;
+      if (clear) this.jobs = new Map();
+      for (const job of list) this.jobs.set(job.id, job);
     } catch { /* 首次运行 */ }
+  }
+
+  /**
+   * 磁盘上有更新就重读。
+   * 插件重载后可能同时存在两个实例，共用一个 jobs.json：跑任务的那个在写，
+   * 显示状态的那个如果不重读，就会一直报旧阶段（曾显示卡在"定妆图"而实际已在渲染）。
+   */
+  async refresh() {
+    try {
+      const stat = await fs.stat(this.file);
+      if (stat.mtimeMs === this.mtime) return;
+      this.mtime = stat.mtimeMs;
+      await this.load(true);
+    } catch { /* 文件还没写出来 */ }
   }
 
   async persist() {
@@ -208,6 +227,7 @@ class JobStore {
     this.jobs = new Map(list.map((job) => [job.id, job]));
     await fs.mkdir(path.dirname(this.file), { recursive: true });
     await fs.writeFile(this.file, JSON.stringify(list, null, 2), 'utf8');
+    try { this.mtime = (await fs.stat(this.file)).mtimeMs; } catch { /* 忽略 */ }
   }
 
   create(params) {
@@ -263,19 +283,27 @@ function planSystemPrompt(shotCount, duration) {
     '    "label": "镜头标题（两句内）",',
     '    "section": "对应哪段歌词，例如 [Chorus] 第1句",',
     '    "beat": "这一镜的情绪，两三个词",',
-    '    "camera": "景别 + 运镜，例如「中景，手持跟拍」「特写，缓慢推」",',
-    '    "transition": "怎么接下一镜，例如「硬切」「叠化」「同构图转场」",',
-    '    "prompt": "画面描述：环境、人物动作、光线、色调"',
+    '    "scene": "地点与环境，写具体：什么样的地方、有什么东西",',
+    '    "time": "时间与天气，例如 深夜暴雨 / 清晨微光",',
+    '    "size": "景别：extreme_wide|wide|medium|close|extreme_close",',
+    '    "horizontal": "机位方向：front|front_left|left|back_left|back|back_right|right|front_right",',
+    '    "elevation": "俯仰：worm|low|eye|high",',
+    '    "move": "运镜：static|push|pull|pan|tilt|tracking|crane_up|crane_down|orbit|handheld",',
+    '    "light": "灯光：natural|front|side|backlit|top|under|soft|dramatic|golden|blue|night|neon",',
+    '    "dof": "景深：extreme_shallow|shallow|medium|deep",',
+    '    "transition": "怎么接下一镜：cut|dissolve|match|whip|fade",',
+    '    "action": "人物在这一镜做什么，具体到身体动作与表情；不写歌词、不写镜头参数",',
+    '    "dialogue": "这一镜要对口型唱的那一句歌词（可留空）"',
     '  }]',
     '}',
     '',
     '硬性规则：',
     `1. shots 必须正好 ${shotCount} 个，一个不多一个不少。`,
     `2. 整首歌约 ${duration} 秒，所以每个镜头约 ${Math.round(duration / shotCount)} 秒。`,
-    '3. 分镜必须服务故事：镜头顺序就是情绪推进顺序；主角从开头到结尾要有变化（去、找、遇到、失去、接受这一类推进）。',
-    '4. section 必须落在真实存在的歌词段落上，不许编不存在的段落名。',
-    '5. prompt 只写画面：环境、动作、光线。绝对不能出现歌词、字幕、文字、水印、logo。',
-    '6. 主角必须始终是同一个人（脸、发型、服装不变），可以换环境、换景别、换机位。',
+    '3. 分镜必须服务故事：镜头顺序就是情绪推进顺序；主角从开头到结尾要有变化。',
+    '4. 景别必须有节奏地变化，不要连着三镜都是中景；运镜一镜只用一种。',
+    '5. action 只写画面：人物动作、表情、与环境的关系。绝对不能写歌词、字幕、文字、水印。',
+    '6. 主角始终是同一个人（脸、发型、服装不变），可以换环境、换景别、换机位。',
     '7. 不要出现「四视图」「多视角」「分屏」「拼图」这类排版词。',
     '8. 歌词要能唱：副歌重复、句子短、押韵。',
   ].join('\n');
@@ -317,6 +345,75 @@ async function readLocalFile(value) {
   if (!item || !path.isAbsolute(item)) return null;
   const buffer = await fs.readFile(item);
   return { buffer, name: path.basename(item) };
+}
+
+/* ---------- 单镜头的两步：静帧 / 视频 ---------- */
+
+/** 出这一镜的静帧（Krea2）。产物落盘 + 传进 ComfyUI input，返回文件名。 */
+async function renderFrame(client, job, plan, shot, params) {
+  const built = await buildFramePrompt(plan, shot, {
+    aspectRatio: params.aspectRatio || '16:9 (Widescreen)',
+    megapixels: params.frameMegapixels || 1.0,
+    steps: params.frameSteps || 8,
+    seed: params.frameSeed,
+    filenamePrefix: `mv_frame/${job.id}_${shot.index + 1}`,
+  });
+  applyModelOverrides(built.prompt, params.models);
+  const promptId = await client.submit(built.prompt);
+  const entry = await client.wait(promptId, 1200000);
+  const item = firstOutputImage(entry, '29');
+  if (!item) throw new Error('静帧没有产出');
+  const buffer = await fetchComfyImage(client, item);
+  const stamp = Date.now().toString(36);
+  const fileName = `frame_${String(shot.index + 1).padStart(2, '0')}_${stamp}.png`;
+  const file = await saveFrame(path.join(DATA_DIR, job.id), fileName, buffer);
+  const name = await client.upload(buffer, `mvf_${job.id}_${shot.index + 1}_${stamp}.png`, 'image/png');
+  return { name, file, seed: built.summary.seed, promptText: built.promptText };
+}
+
+/** 用静帧当首帧、定妆图当身份，出这一镜的视频（H3 ref2va）。 */
+async function renderShotVideo(client, job, plan, shot, options) {
+  const built = await buildShotVideoPrompt(plan, shot, {
+    frameImage: options.frameImage,
+    heroImage: job.hero && job.hero.name,
+    aspectRatio: options.aspectRatio,
+    megapixels: options.megapixels || 0.4,
+    seed: options.seed,
+    lightning: options.lightning !== false,
+    refImageSize: options.refImageSize || 'match',
+  });
+  applyModelOverrides(built.prompt, options.models);
+  const promptId = await client.submit(built.prompt);
+  const entry = await client.wait(promptId, options.timeoutMs || 3600000);
+  const { buffer, duration } = await fetchVideo(client, entry, { nodeId: '92' });
+  const fileName = `shot_${String(shot.index + 1).padStart(2, '0')}.mp4`;
+  const file = await saveVideo(path.join(DATA_DIR, job.id), fileName, buffer);
+  const comfy = await client.upload(buffer, `mv_${job.id}_${shot.index + 1}.mp4`, 'video/mp4');
+  return { file, comfy, bytes: buffer.length, duration, seed: built.summary.seed, promptText: built.promptText };
+}
+
+/** 抽上一镜的最后一帧，当下一镜的首帧（末帧接龙）。抽不到返回 null。 */
+async function extractTail(client, job, prevShot) {
+  const dur = Number(prevShot.videoDuration) || 0;
+  const graph = buildTailFramePrompt({
+    video: prevShot.comfyVideo,
+    startTime: Math.max(0, dur - 0.15),
+    filenamePrefix: `mv_tail/${job.id}_${prevShot.index + 1}`,
+  });
+  const promptId = await client.submit(graph);
+  const entry = await client.wait(promptId, 600000);
+  const item = firstOutputImage(entry, '4');
+  if (!item) return null;
+  const buffer = await fetchComfyImage(client, item);
+  const stamp = Date.now().toString(36);
+  const name = await client.upload(buffer, `mvt_${job.id}_${prevShot.index + 1}_${stamp}.png`, 'image/png');
+  // 落盘一份：面板显示的首帧也要换成这张，否则用户看到的还是原来那张静帧
+  const file = await saveFrame(
+    path.join(DATA_DIR, job.id),
+    `tail_${String(prevShot.index + 1).padStart(2, '0')}_${stamp}.png`,
+    buffer,
+  );
+  return { name, file };
 }
 
 async function execute(job, params) {
@@ -397,17 +494,33 @@ async function execute(job, params) {
 
   /* 3. 按真实歌长重排时间轴：歌是 YuE2 生成的，实际长度和请求值不一定一样 */
   plan = normalizePlan(plan, { duration: songDuration, shotCount: params.shotCount });
-  const shots = plan.shots.map((shot) => ({
-    index: shot.index, label: shot.label, prompt: shot.prompt,
-    start: shot.start, end: shot.end, seconds: shot.seconds,
-    status: 'pending', file: null, comfy: null, error: null, seed: null, elapsedSeconds: 0,
-  }));
+  // 续跑时不能把已经出好的静帧/视频冲掉：按 index 把运行时产物接回来
+  const existing = new Map((job.shots || []).map((s) => [s.index, s]));
+  const shots = plan.shots.map((shot) => {
+    const prev = existing.get(shot.index) || {};
+    return {
+      ...shot,
+      frame: prev.frame || null,
+      frameFile: prev.frameFile || null,
+      frameVersions: prev.frameVersions || [],
+      frameStatus: prev.frame ? 'done' : 'pending',
+      frameFromTail: prev.frameFromTail || false,
+      video: prev.video || null,
+      comfyVideo: prev.comfyVideo || null,
+      videoStatus: prev.video ? 'done' : 'pending',
+      videoDuration: prev.videoDuration || null,
+      error: null,
+      elapsedSeconds: prev.elapsedSeconds || 0,
+    };
+  });
   await jobPatch(job.id, { plan, shots, total: shots.length });
 
   /* 4. 主角定妆图 */
   await jobPatch(job.id, { stage: 'hero', stageLabel: '生成主角定妆图' });
   let heroImage = null;
-  if (params.heroImage) {
+  if (job.hero && job.hero.name && params.resume !== false) {
+    heroImage = job.hero.name;
+  } else if (params.heroImage) {
     heroImage = await ensureComfyFile(client, params.heroImage, 'image');
   } else if (params.autoHero !== false) {
     const heroPrompt = [
@@ -439,46 +552,99 @@ async function execute(job, params) {
     await jobPatch(job.id, { hero: { file: heroFile, name: heroImage } });
   }
 
-  /* 4. 逐镜头渲染 */
-  await jobPatch(job.id, { stage: 'render', stageLabel: '渲染镜头' });
-  const clips = [];
-  for (const shot of job.shots) {
-    if (shot.status === 'done' && shot.comfy && params.resume !== false) {
-      clips.push(shot.comfy);
-      continue;
+  /* 5. 静帧：每镜一张，先给人看，不满意可以单张重 roll */
+  const phase = String(params.phase || 'all');
+  const wantFrames = phase === 'all' || phase === 'frames';
+  const wantVideos = phase === 'all' || phase === 'videos';
+  const opt = {
+    aspectRatio: params.aspectRatio || '16:9 (Widescreen)',
+    megapixels: params.megapixels || 0.4,
+    seed: params.seed,
+    lightning: params.lightning !== false,
+    refImageSize: params.refImageSize || 'match',
+    models: params.models,
+    timeoutMs: params.shotTimeoutMs,
+  };
+
+  if (wantFrames) {
+    await jobPatch(job.id, { stage: 'frames', stageLabel: '生成分镜静帧' });
+    for (const shot of job.shots) {
+      if (shot.frame && params.resume !== false) continue;
+      await jobPatch(job.id, { currentShot: shot.index });
+      await jobPatchShot(job.id, shot.index, { frameStatus: 'running', error: null, frameStartedAt: Date.now() });
+      try {
+        const still = await renderFrame(client, job, plan, shot, params);
+        await jobPatchShot(job.id, shot.index, {
+          frame: still.name,
+          frameFile: still.file,
+          frameStatus: 'done',
+          framePromptText: still.promptText,
+          frameSeed: still.seed,
+          frameAt: Date.now(),
+          frameVersions: [...(shot.frameVersions || []), { name: still.name, file: still.file, at: Date.now() }].slice(-6),
+        });
+      } catch (error) {
+        await jobPatchShot(job.id, shot.index, { frameStatus: 'failed', error: friendlyError(error) });
+        throw new Error(`第 ${shot.index + 1} 镜的静帧失败：${friendlyError(error)}`);
+      }
     }
-    await jobPatch(job.id, { currentShot: shot.index });
-    await jobPatchShot(job.id, shot.index, { status: 'running', startedAt: Date.now(), error: null });
-    try {
-      const built = await buildShotPrompt(plan, shot, {
-        heroImage,
-        aspectRatio: params.aspectRatio || '16:9 (Widescreen)',
-        megapixels: params.megapixels || 0.4,
-        seed: params.seed,
-        lightning: params.lightning !== false,
-        refImageSize: params.refImageSize || 'match',
-      });
-      applyModelOverrides(built.prompt, params.models);
-      const promptId = await client.submit(built.prompt);
-      const entry = await client.wait(promptId, params.shotTimeoutMs || 3600000);
-      const { buffer } = await fetchVideo(client, entry, { nodeId: '92' });
-      const fileName = `shot_${String(shot.index + 1).padStart(2, '0')}.mp4`;
-      const file = await saveVideo(path.join(DATA_DIR, job.id), fileName, buffer);
-      const comfy = await client.upload(buffer, `mv_${job.id}_${shot.index + 1}.mp4`, 'video/mp4');
-      clips.push(comfy);
-      await jobPatchShot(job.id, shot.index, {
-        status: 'done', file, comfy, bytes: buffer.length, promptText: built.promptText,
-        seed: built.summary.seed, elapsedSeconds: Math.round((Date.now() - (shot.startedAt || Date.now())) / 1000),
-      });
-      await jobPatch(job.id, { done: job.shots.filter((s) => s.status === 'done').length });
-    } catch (error) {
-      await jobPatchShot(job.id, shot.index, { status: 'failed', error: friendlyError(error) });
-      throw new Error(`第 ${shot.index + 1} 个镜头失败：${friendlyError(error)}`);
+    await jobPatch(job.id, { framesDone: true });
+  }
+
+  if (phase === 'frames') {
+    await jobPatch(job.id, { status: 'paused', stage: 'frames', stageLabel: '静帧就绪，等你审' });
+    return;
+  }
+
+  /* 6. 视频：首帧 = 本镜静帧；开了接龙就用上一镜末帧覆盖 */
+  if (wantVideos) {
+    await jobPatch(job.id, { stage: 'videos', stageLabel: '逐镜生成视频' });
+    const tailLink = params.tailLink !== false;
+    for (const shot of job.shots) {
+      if (shot.video && shot.comfyVideo && params.resume !== false) continue;
+      if (!shot.frame) throw new Error(`第 ${shot.index + 1} 镜还没有静帧，先出静帧`);
+      let frameName = shot.frame;
+      if (tailLink && shot.index > 0) {
+        const prev = job.shots[shot.index - 1];
+        if (prev && prev.comfyVideo) {
+          try {
+            const tail = await extractTail(client, job, prev);
+            if (tail) {
+              frameName = tail.name;
+              await jobPatchShot(job.id, shot.index, { frame: tail.name, frameFile: tail.file, frameFromTail: true });
+            }
+          } catch { /* 抽不到就用本镜自己的静帧，不阻断 */ }
+        }
+      }
+      await jobPatch(job.id, { currentShot: shot.index });
+      await jobPatchShot(job.id, shot.index, { videoStatus: 'running', error: null, videoStartedAt: Date.now() });
+      try {
+        const live = job.shots.find((s) => s.index === shot.index) || shot;
+        const made = await renderShotVideo(client, job, plan, live, { ...opt, frameImage: frameName });
+        await jobPatchShot(job.id, shot.index, {
+          frame: frameName,
+          video: made.file,
+          comfyVideo: made.comfy,
+          videoStatus: 'done',
+          bytes: made.bytes,
+          videoPromptText: made.promptText,
+          videoSeed: made.seed,
+          videoDuration: made.duration,
+          videoAt: Date.now(),
+          elapsedSeconds: Math.round((Date.now() - (shot.videoStartedAt || Date.now())) / 1000),
+        });
+        await jobPatch(job.id, { done: job.shots.filter((s) => s.videoStatus === 'done').length });
+      } catch (error) {
+        await jobPatchShot(job.id, shot.index, { videoStatus: 'failed', error: friendlyError(error) });
+        throw new Error(`第 ${shot.index + 1} 个镜头失败：${friendlyError(error)}`);
+      }
     }
   }
 
-  /* 5. 拼接 + 压曲 */
+  /* 7. 拼接 + 压曲 */
   await jobPatch(job.id, { stage: 'stitch', stageLabel: '拼接并压上原曲' });
+  const clips = job.shots.map((s) => s.comfyVideo).filter(Boolean);
+  if (clips.length === 0) throw new Error('没有可拼接的镜头视频');
   const graph = buildStitchPrompt({
     clips,
     audio: songName,
@@ -562,9 +728,11 @@ export function apply(ctx) {
         { key: 'plan', label: '写剧本' },
         { key: 'song', label: '生成歌曲' },
         { key: 'hero', label: '定妆图' },
-        { key: 'render', label: '渲染镜头' },
+        { key: 'frames', label: '分镜静帧' },
+        { key: 'videos', label: '镜头视频' },
         { key: 'stitch', label: '拼接压曲' },
       ],
+      vocab: vocab(),
       comfyui: probe,
     };
   }
@@ -602,8 +770,9 @@ export function apply(ctx) {
         '剧本 / 分镜：',
         ...plan.shots.map((s) => [
           `${s.index + 1}. [${s.start}s-${s.end}s] ${s.label}${s.section ? ` · 对位 ${s.section}` : ''}${s.beat ? ` · ${s.beat}` : ''}`,
-          `   运镜：${s.camera || '—'}${s.transition ? ` ｜ 转场：${s.transition}` : ''}`,
-          `   画面：${s.prompt}`,
+          `   镜头：${cameraSummary(s)} ｜ 转场：${s.transition || '—'}`,
+          `   场景：${s.scene || '—'}${s.time ? `（${s.time}）` : ''}`,
+          `   动作：${s.action || '—'}`,
         ].join('\n')),
         '',
         '歌词：',
@@ -632,6 +801,8 @@ export function apply(ctx) {
         heroImage: { type: 'string', description: '主角定妆图：本机绝对路径或 ComfyUI input 文件名；不给就自动生成' },
         aspectRatio: { type: 'string', description: '画面比例，默认 16:9 (Widescreen)' },
         megapixels: { type: 'number', description: '每镜像素（百万），默认 0.4；显存紧张就降' },
+        phase: { type: 'string', description: "all（默认，全流程）| frames（只出静帧，停下等人审）| videos（用已有静帧出视频并合成）" },
+        tailLink: { type: 'boolean', description: '末帧接龙：用上一镜最后一帧当下一镜首帧，默认开' },
         seed: { type: 'number', description: '镜头种子基准' },
         host: { type: 'string', description: 'ComfyUI 地址' },
       },
@@ -664,16 +835,22 @@ export function apply(ctx) {
     },
     output: OUTPUT,
     async execute(args) {
+      await jobStore.refresh();
       const id = String(args.id || '');
       if (id) {
         const job = jobStore.get(id);
         if (!job) throw new Error('没有这个任务：' + id);
-        const done = (job.shots || []).filter((s) => s.status === 'done').length;
+        const frames = (job.shots || []).filter((s) => s.frame).length;
+        const videos = (job.shots || []).filter((s) => s.video).length;
         return text([
           `${job.id} · ${job.status} · ${job.stageLabel || job.stage}${job.elapsedSeconds ? ` · ${job.elapsedSeconds}s` : ''}`,
           job.plan ? `《${job.plan.title}》 ${job.plan.duration}s · ${job.plan.shotCount} 镜` : '',
-          job.total ? `镜头 ${done}/${job.total}${job.currentShot != null ? `（正在跑第 ${job.currentShot + 1} 个）` : ''}` : '',
-          ...(job.shots || []).map((s) => `  ${s.index + 1}. ${s.status}${s.elapsedSeconds ? ` ${s.elapsedSeconds}s` : ''}${s.error ? ' — ' + s.error : ''}`),
+          job.total ? `静帧 ${frames}/${job.total} · 视频 ${videos}/${job.total}${job.currentShot != null ? `（正在处理第 ${job.currentShot + 1} 镜）` : ''}` : '',
+          ...(job.shots || []).map((s) => {
+            const mark = s.videoStatus === 'done' ? '🎬' : s.frameStatus === 'done' ? '🖼' : '·';
+            const state = s.videoStatus === 'running' ? '出视频中' : s.frameStatus === 'running' ? '出静帧中' : (s.videoStatus === 'done' ? '视频完成' : s.frameStatus === 'done' ? '静帧完成' : '待生成');
+            return `  ${s.index + 1}. ${mark} ${state}${s.elapsedSeconds ? ` ${s.elapsedSeconds}s` : ''}${s.error ? ' — ' + s.error : ''}`;
+          }),
           job.error ? `失败：${job.error}` : '',
           job.file ? `成品：${job.file}` : '',
         ]);
@@ -774,8 +951,8 @@ export function apply(ctx) {
           sendJson(response, 400, { error: 'theme_or_plan_required', message: '要么给主题，要么给分镜表' });
           return;
         }
-        if (!body.song && !String(body.lyrics || '').trim()) {
-          sendJson(response, 400, { error: 'lyrics_required', message: '要现出歌就必须有歌词：先点「生成分镜」拿到歌词' });
+        if (!body.song && !String(body.lyrics || '').trim() && !String((body.plan && body.plan.lyrics) || '').trim()) {
+          sendJson(response, 400, { error: 'lyrics_required', message: '要现出歌就必须有歌词：先点「生成剧本」拿到歌词' });
           return;
         }
         const params = { ...body };
@@ -785,12 +962,154 @@ export function apply(ctx) {
       },
     }));
 
+    /** 在已有任务上继续：出静帧 / 出视频 / 重拼。已经出过的阶段不会重跑。 */
+    async function resumeJob(job, phase) {
+      const params = {
+        ...job.params,
+        plan: job.plan,
+        song: job.song && job.song.file ? job.song.file : job.params.song,
+        heroImage: job.hero && job.hero.name ? job.hero.name : job.params.heroImage,
+        phase,
+      };
+      await jobStore.patch(job.id, { status: 'running', stage: phase === 'videos' ? 'videos' : 'frames', error: null });
+      (async () => {
+        try {
+          await execute(job, params);
+        } catch (error) {
+          await jobStore.patch(job.id, {
+            status: 'failed',
+            stage: 'failed',
+            error: friendlyError(error),
+            elapsedSeconds: Math.round((Date.now() - job.createdAt) / 1000),
+          });
+        }
+      })();
+    }
+
+    disposers.push(webServer.register({
+      kind: 'exact',
+      path: '/api/comfyui-music-mv/continue',
+      handler: async (request, response) => {
+        if (request.method !== 'POST') { sendJson(response, 405, { error: 'method_not_allowed' }); return; }
+        if (!sameOrigin(request)) { sendJson(response, 403, { error: 'forbidden: same-origin only' }); return; }
+        let body = null;
+        try { body = await readJsonBody(request); } catch { body = null; }
+        const id = String((body && body.id) || '');
+        const phase = String((body && body.phase) || 'videos');
+        await jobStore.refresh();
+        const job = jobStore.get(id);
+        if (!job) { sendJson(response, 404, { error: 'not_found', id }); return; }
+        if (job.status === 'running') { sendJson(response, 409, { error: 'busy', message: '这个任务还在跑' }); return; }
+        if (phase === 'videos' && !job.shots.some((s) => s.frame)) {
+          sendJson(response, 400, { error: 'no_frames', message: '还没有静帧，先出静帧' });
+          return;
+        }
+        await resumeJob(job, phase);
+        sendJson(response, 202, { job: { id: job.id, status: 'running', phase } });
+      },
+    }));
+
+    /** 单镜重 roll 静帧：同步返回（Krea2 一张几十秒）。 */
+    disposers.push(webServer.register({
+      kind: 'exact',
+      path: '/api/comfyui-music-mv/frame',
+      handler: async (request, response) => {
+        if (request.method !== 'POST') { sendJson(response, 405, { error: 'method_not_allowed' }); return; }
+        if (!sameOrigin(request)) { sendJson(response, 403, { error: 'forbidden: same-origin only' }); return; }
+        let body = null;
+        try { body = await readJsonBody(request); } catch { body = null; }
+        const id = String((body && body.id) || '');
+        const index = Number(body && body.index);
+        await jobStore.refresh();
+        const job = jobStore.get(id);
+        const shot = job && Array.isArray(job.shots) ? job.shots.find((s) => s.index === index) : null;
+        if (!shot) { sendJson(response, 404, { error: 'not_found', id, index }); return; }
+        try {
+          const client = new ComfyClient();
+          const alive = await client.alive();
+          if (!alive) throw new Error('连不上 ComfyUI');
+          await jobStore.patchShot(id, index, { frameStatus: 'running', error: null });
+          const still = await renderFrame(client, job, job.plan, shot, job.params);
+          await jobStore.patchShot(id, index, {
+            frame: still.name, frameFile: still.file, frameStatus: 'done', frameFromTail: false,
+            framePromptText: still.promptText, frameSeed: still.seed, frameAt: Date.now(),
+            frameVersions: [...(shot.frameVersions || []), { name: still.name, file: still.file, at: Date.now() }].slice(-6),
+          });
+          sendJson(response, 200, { ok: true, frame: still.name, file: still.file });
+        } catch (error) {
+          await jobStore.patchShot(id, index, { frameStatus: 'failed', error: friendlyError(error) });
+          sendJson(response, 500, { error: 'frame_failed', message: friendlyError(error) });
+        }
+      },
+    }));
+
+    /** 改单镜参数 / 换首帧。 */
+    disposers.push(webServer.register({
+      kind: 'exact',
+      path: '/api/comfyui-music-mv/shot',
+      handler: async (request, response) => {
+        if (request.method !== 'POST') { sendJson(response, 405, { error: 'method_not_allowed' }); return; }
+        if (!sameOrigin(request)) { sendJson(response, 403, { error: 'forbidden: same-origin only' }); return; }
+        let body = null;
+        try { body = await readJsonBody(request); } catch { body = null; }
+        const id = String((body && body.id) || '');
+        const index = Number(body && body.index);
+        const patch = (body && body.patch) || {};
+        const allowed = ['label', 'section', 'beat', 'scene', 'time', 'size', 'horizontal', 'elevation',
+          'move', 'light', 'dof', 'transition', 'action', 'dialogue', 'seed', 'seconds'];
+        await jobStore.refresh();
+        const job = jobStore.get(id);
+        const shot = job && Array.isArray(job.shots) ? job.shots.find((s) => s.index === index) : null;
+        if (!shot) { sendJson(response, 404, { error: 'not_found', id, index }); return; }
+        const clean = {};
+        for (const key of allowed) if (patch[key] !== undefined) clean[key] = patch[key];
+        await jobStore.patchShot(id, index, clean);
+        sendJson(response, 200, { ok: true, shot: (jobStore.get(id).shots || []).find((s) => s.index === index) });
+      },
+    }));
+
+    /** 只用现有镜头重新拼接（换了素材/裁切长度时用）。 */
+    disposers.push(webServer.register({
+      kind: 'exact',
+      path: '/api/comfyui-music-mv/stitch',
+      handler: async (request, response) => {
+        if (request.method !== 'POST') { sendJson(response, 405, { error: 'method_not_allowed' }); return; }
+        if (!sameOrigin(request)) { sendJson(response, 403, { error: 'forbidden: same-origin only' }); return; }
+        let body = null;
+        try { body = await readJsonBody(request); } catch { body = null; }
+        const id = String((body && body.id) || '');
+        await jobStore.refresh();
+        const job = jobStore.get(id);
+        if (!job) { sendJson(response, 404, { error: 'not_found', id }); return; }
+        const clips = (job.shots || []).map((s) => s.comfyVideo).filter(Boolean);
+        if (clips.length === 0) { sendJson(response, 400, { error: 'no_clips' }); return; }
+        try {
+          const client = new ComfyClient();
+          const graph = buildStitchPrompt({
+            clips,
+            audio: job.song && job.song.name,
+            filenamePrefix: 'video/MV_' + job.id + '_' + Date.now().toString(36),
+            trimSeconds: job.song && job.song.duration,
+          });
+          const promptId = await client.submit(graph);
+          const entry = await client.wait(promptId, 1800000);
+          const { buffer } = await fetchVideo(client, entry, { nodeId: '2002' });
+          const file = await saveVideo(DATA_DIR, job.id + '.mp4', buffer);
+          await jobStore.patch(id, { status: 'done', stage: 'done', stageLabel: '完成', file, bytes: buffer.length });
+          sendJson(response, 200, { ok: true, file });
+        } catch (error) {
+          sendJson(response, 500, { error: 'stitch_failed', message: friendlyError(error) });
+        }
+      },
+    }));
+
     disposers.push(webServer.register({
       kind: 'exact',
       path: '/api/comfyui-music-mv/job',
       handler: async (request, response) => {
         const url = new URL(request.url, 'http://localhost');
         const id = String(url.searchParams.get('id') || '');
+        await jobStore.refresh();
         const job = jobStore.get(id);
         if (!job) { sendJson(response, 404, { error: 'not_found', id }); return; }
         sendJson(response, 200, job);
@@ -801,6 +1120,7 @@ export function apply(ctx) {
       kind: 'exact',
       path: '/api/comfyui-music-mv/jobs',
       handler: async (_request, response) => {
+        await jobStore.refresh();
         sendJson(response, 200, { jobs: jobStore.list(20) });
       },
     }));
@@ -859,9 +1179,25 @@ export function apply(ctx) {
       handler: async (request, response) => {
         const url = new URL(request.url, 'http://localhost');
         const id = String(url.searchParams.get('id') || '');
+        await jobStore.refresh();
         const job = jobStore.get(id);
         if (!job || !job.file) { sendJson(response, 404, { error: 'not_found', id }); return; }
         await streamFile(request, response, job.file, 'video/mp4');
+      },
+    }));
+
+    disposers.push(webServer.register({
+      kind: 'exact',
+      path: '/api/comfyui-music-mv/frame-img',
+      handler: async (request, response) => {
+        const url = new URL(request.url, 'http://localhost');
+        const id = String(url.searchParams.get('id') || '');
+        const index = Number(url.searchParams.get('index') || 0);
+        await jobStore.refresh();
+        const job = jobStore.get(id);
+        const shot = job && Array.isArray(job.shots) ? job.shots.find((s) => s.index === index) : null;
+        if (!shot || !shot.frameFile) { sendJson(response, 404, { error: 'not_found', id, index }); return; }
+        await streamFile(request, response, shot.frameFile, 'image/png');
       },
     }));
 
@@ -872,10 +1208,11 @@ export function apply(ctx) {
         const url = new URL(request.url, 'http://localhost');
         const id = String(url.searchParams.get('id') || '');
         const index = Number(url.searchParams.get('index') || 0);
+        await jobStore.refresh();
         const job = jobStore.get(id);
         const shot = job && Array.isArray(job.shots) ? job.shots.find((s) => s.index === index) : null;
-        if (!shot || !shot.file) { sendJson(response, 404, { error: 'not_found', id, index }); return; }
-        await streamFile(request, response, shot.file, 'video/mp4');
+        if (!shot || !shot.video) { sendJson(response, 404, { error: 'not_found', id, index }); return; }
+        await streamFile(request, response, shot.video, 'video/mp4');
       },
     }));
 
@@ -885,6 +1222,7 @@ export function apply(ctx) {
       handler: async (request, response) => {
         const url = new URL(request.url, 'http://localhost');
         const id = String(url.searchParams.get('id') || '');
+        await jobStore.refresh();
         const job = jobStore.get(id);
         if (!job || !job.song || !job.song.file) { sendJson(response, 404, { error: 'not_found', id }); return; }
         const ext = path.extname(job.song.file).toLowerCase();

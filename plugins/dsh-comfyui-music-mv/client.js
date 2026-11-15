@@ -4,7 +4,6 @@ window.__ModuleLoader__.load({
     const React = require('react');
     const h = React.createElement;
 
-    /** 统一调用：空响应 / 非 JSON 都给能看懂的错误。 */
     async function api(url, init) {
       const res = await fetch(url, init);
       const raw = await res.text();
@@ -20,6 +19,12 @@ window.__ModuleLoader__.load({
       return data;
     }
 
+    const post = (url, body) => api(url, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(body || {}),
+    });
+
     const ASPECTS = [
       ['16:9 (Widescreen)', '16:9'],
       ['9:16 (Portrait)', '9:16'],
@@ -29,15 +34,16 @@ window.__ModuleLoader__.load({
       ['21:9 (Cinematic)', '21:9'],
     ];
 
-    const STAGES = [
+    const STEPS = [
       ['plan', '剧本'],
       ['song', '出歌'],
-      ['hero', '定妆图'],
-      ['render', '渲染镜头'],
-      ['stitch', '拼接压曲'],
+      ['hero', '定妆'],
+      ['frames', '静帧'],
+      ['videos', '视频'],
+      ['stitch', '合成'],
     ];
 
-    const FORM_KEY = 'comfyui-music-mv.form.v1';
+    const FORM_KEY = 'comfyui-music-mv.form.v2';
 
     function loadForm() {
       try {
@@ -56,8 +62,12 @@ window.__ModuleLoader__.load({
       aspectRatio: '16:9 (Widescreen)',
       megapixels: 0.4,
       style: '',
-      autoHero: true,
+      tailLink: true,
     };
+
+    const small = { fontSize: '12px' };
+    const muted = { fontSize: '12px', opacity: 0.62 };
+    const card = { border: '1px solid rgba(128,128,128,0.22)', borderRadius: '10px', overflow: 'hidden', background: 'rgba(128,128,128,0.04)' };
 
     function MvIcon(props) {
       const size = props && typeof props.size === 'number' ? props.size : 20;
@@ -74,29 +84,29 @@ window.__ModuleLoader__.load({
       );
     }
 
-    const small = { fontSize: '12px' };
-    const mutedText = { fontSize: '12px', opacity: 0.65 };
-    const box = { padding: '10px', border: '1px solid rgba(128,128,128,0.25)', borderRadius: '8px' };
-    const row = { display: 'flex', flexWrap: 'wrap', gap: '12px', alignItems: 'flex-end' };
-
     function MvPanel() {
       const [initial] = React.useState(function () { return loadForm(); });
       const [meta, setMeta] = React.useState(null);
       const [metaError, setMetaError] = React.useState('');
       const [cfg, setCfg] = React.useState(function () { return { ...CFG_DEFAULTS, ...((initial && initial.cfg) || {}) }; });
       const [plan, setPlan] = React.useState((initial && initial.plan) || null);
-      const [planModel, setPlanModel] = React.useState('');
       const [job, setJob] = React.useState(null);
       const [history, setHistory] = React.useState([]);
       const [busy, setBusy] = React.useState('');
       const [error, setError] = React.useState('');
       const [openShot, setOpenShot] = React.useState(null);
+      const [bust, setBust] = React.useState(0);
 
       React.useEffect(function () {
-        try {
-          window.localStorage.setItem(FORM_KEY, JSON.stringify({ cfg, plan }));
-        } catch { /* 隐私模式写不进去就算了 */ }
+        try { window.localStorage.setItem(FORM_KEY, JSON.stringify({ cfg, plan })); } catch { /* ignore */ }
       }, [cfg, plan]);
+
+      const refreshJob = React.useCallback(function (id) {
+        if (!id) return Promise.resolve(null);
+        return api('/api/comfyui-music-mv/job?id=' + encodeURIComponent(id))
+          .then(function (next) { setJob(next); return next; })
+          .catch(function () { return null; });
+      }, []);
 
       const loadMeta = React.useCallback(async function (attempt) {
         const tries = typeof attempt === 'number' ? attempt : 0;
@@ -104,10 +114,7 @@ window.__ModuleLoader__.load({
           setMeta(await api('/api/comfyui-music-mv/meta'));
           setMetaError('');
         } catch (err) {
-          if (tries < 3) {
-            setTimeout(function () { loadMeta(tries + 1); }, 600 * (tries + 1));
-            return;
-          }
+          if (tries < 3) { setTimeout(function () { loadMeta(tries + 1); }, 700 * (tries + 1)); return; }
           setMeta({ comfyui: { online: false } });
           setMetaError(String((err && err.message) || err));
         }
@@ -118,7 +125,7 @@ window.__ModuleLoader__.load({
           .then(function (d) {
             if (!d || !Array.isArray(d.jobs)) return;
             setHistory(d.jobs);
-            setJob(function (current) { return current || d.jobs[0] || null; });
+            setJob(function (cur) { return cur || d.jobs[0] || null; });
           })
           .catch(function () {});
       }, []);
@@ -126,344 +133,336 @@ window.__ModuleLoader__.load({
       React.useEffect(function () {
         loadMeta(0);
         refreshHistory();
-        const timer = setInterval(refreshHistory, 8000);
+        const timer = setInterval(refreshHistory, 10000);
         return function () { clearInterval(timer); };
       }, [loadMeta, refreshHistory]);
 
-      // 后台任务轮询：只在跑的时候每 3 秒问一次
-      React.useEffect(function () {
-        if (!job || (job.status !== 'queued' && job.status !== 'running')) return undefined;
-        const timer = setInterval(function () {
-          api('/api/comfyui-music-mv/job?id=' + encodeURIComponent(job.id))
-            .then(function (next) {
-              setJob(next);
-              if (next.status === 'done' || next.status === 'failed') refreshHistory();
-            })
-            .catch(function () {});
-        }, 3000);
-        return function () { clearInterval(timer); };
-      }, [job, refreshHistory]);
-
       const running = !!(job && (job.status === 'queued' || job.status === 'running'));
+
+      React.useEffect(function () {
+        if (!running || !job) return undefined;
+        const timer = setInterval(function () {
+          refreshJob(job.id).then(function (next) {
+            if (next && next.status !== 'running' && next.status !== 'queued') refreshHistory();
+          });
+        }, 2500);
+        return function () { clearInterval(timer); };
+      }, [running, job, refreshJob, refreshHistory]);
+
+      const vocab = (meta && meta.vocab) || { sizes: [], horizontals: [], elevations: [], moves: [], lights: [], dofs: [], transitions: [] };
+      const online = !!(meta && meta.comfyui && meta.comfyui.online);
+      const vram = meta && meta.comfyui && typeof meta.comfyui.vramFreeGB === 'number' ? meta.comfyui.vramFreeGB : null;
 
       async function makePlan() {
         setError('');
         if (!String(cfg.theme || '').trim()) { setError('先写一个主题'); return; }
         setBusy('正在写剧本…');
         try {
-          const data = await api('/api/comfyui-music-mv/plan', {
-            method: 'POST',
-            headers: { 'content-type': 'application/json' },
-            body: JSON.stringify({
-              theme: cfg.theme,
-              duration: cfg.duration,
-              style: cfg.style,
-            }),
-          });
+          const data = await post('/api/comfyui-music-mv/plan', { theme: cfg.theme, duration: cfg.duration, style: cfg.style });
           setPlan(data.plan);
-          setPlanModel(data.model || '');
         } catch (err) {
           setError(String((err && err.message) || err));
-        } finally {
-          setBusy('');
-        }
+        } finally { setBusy(''); }
       }
 
-      async function start() {
+      async function startRun(phase) {
         setError('');
         if (!plan) { setError('先生成剧本'); return; }
-        if (!String(plan.lyrics || '').trim()) { setError('歌词是空的，出不了歌'); return; }
-        setBusy('正在排队…');
+        setBusy(phase === 'all' ? '一键到底：正在排队…' : '出静帧：正在排队…');
         try {
-          const data = await api('/api/comfyui-music-mv/run', {
-            method: 'POST',
-            headers: { 'content-type': 'application/json' },
-            body: JSON.stringify({
-              plan,
-              theme: cfg.theme,
-              duration: plan.duration,
-              aspectRatio: cfg.aspectRatio,
-              megapixels: cfg.megapixels,
-              autoHero: cfg.autoHero,
-            }),
+          const data = await post('/api/comfyui-music-mv/run', {
+            plan,
+            theme: cfg.theme,
+            duration: plan.duration,
+            aspectRatio: cfg.aspectRatio,
+            megapixels: cfg.megapixels,
+            tailLink: cfg.tailLink,
+            phase,
           });
-          setJob(data.job);
+          setJob({ id: data.job.id, status: 'queued', plan, shots: [] });
+          refreshJob(data.job.id);
         } catch (err) {
           setError(String((err && err.message) || err));
-        } finally {
-          setBusy('');
+        } finally { setBusy(''); }
+      }
+
+      async function continueRun(phase) {
+        if (!job) return;
+        setError('');
+        setBusy(phase === 'videos' ? '正在出视频…' : '继续…');
+        try {
+          await post('/api/comfyui-music-mv/continue', { id: job.id, phase });
+          refreshJob(job.id);
+        } catch (err) {
+          setError(String((err && err.message) || err));
+        } finally { setBusy(''); }
+      }
+
+      async function restitch() {
+        if (!job) return;
+        setError('');
+        setBusy('正在重新合成…');
+        try {
+          await post('/api/comfyui-music-mv/stitch', { id: job.id });
+          await refreshJob(job.id);
+          setBust(Date.now());
+        } catch (err) {
+          setError(String((err && err.message) || err));
+        } finally { setBusy(''); }
+      }
+
+      async function regenFrame(index) {
+        if (!job) return;
+        setError('');
+        setBusy('正在重出一张静帧…');
+        try {
+          await post('/api/comfyui-music-mv/frame', { id: job.id, index });
+          await refreshJob(job.id);
+          setBust(Date.now());
+        } catch (err) {
+          setError(String((err && err.message) || err));
+        } finally { setBusy(''); }
+      }
+
+      async function saveShot(index, patch) {
+        if (!job) return;
+        try {
+          const data = await post('/api/comfyui-music-mv/shot', { id: job.id, index, patch });
+          setJob(function (prev) {
+            if (!prev) return prev;
+            const shots = prev.shots.map(function (s) { return s.index === index ? data.shot : s; });
+            return { ...prev, shots };
+          });
+        } catch (err) {
+          setError(String((err && err.message) || err));
         }
       }
 
-      function patchPlan(patch) {
-        setPlan(function (prev) { return prev ? { ...prev, ...patch } : prev; });
-      }
-
-      function patchShot(index, patch) {
-        setPlan(function (prev) {
-          if (!prev) return prev;
-          const shots = prev.shots.map(function (s) { return s.index === index ? { ...s, ...patch } : s; });
-          return { ...prev, shots };
-        });
-      }
+      function patchPlan(patch) { setPlan(function (p) { return p ? { ...p, ...patch } : p; }); }
 
       function num(labelText, key, min, max, step) {
         return h('label', { key: key, style: { display: 'flex', flexDirection: 'column', gap: '2px', ...small } },
           labelText,
           h('input', {
             type: 'number', min: min, max: max, step: step, value: cfg[key],
-            onChange: function (e) { setCfg(function (prev) { return { ...prev, [key]: Number(e.target.value) }; }); },
+            onChange: function (e) { setCfg(function (p) { return { ...p, [key]: Number(e.target.value) }; }); },
             style: { width: '92px' },
           })
         );
       }
 
-      const online = !!(meta && meta.comfyui && meta.comfyui.online);
-      const vram = meta && meta.comfyui && typeof meta.comfyui.vramFreeGB === 'number' ? meta.comfyui.vramFreeGB : null;
-      const story = (plan && plan.story) || {};
-      const shotTotal = plan && Array.isArray(plan.shots) ? plan.shots.length : 0;
+      function sel(key, options, value, onChange) {
+        return h('select', {
+          value: value || '',
+          onChange: function (e) { onChange(e.target.value); },
+          style: { fontSize: '12px' },
+        }, (options || []).map(function (o) { return h('option', { key: o.key, value: o.key }, o.zh); }));
+      }
 
-      const progressBar = (function () {
-        if (!job) return null;
-        const done = Array.isArray(job.shots) ? job.shots.filter(function (s) { return s.status === 'done'; }).length : 0;
-        const total = job.total || (Array.isArray(job.shots) ? job.shots.length : 0);
-        const stageIndex = STAGES.findIndex(function (s) { return s[0] === job.stage; });
-        return h('div', { style: { display: 'flex', gap: '6px', flexWrap: 'wrap', margin: '8px 0' } },
-          STAGES.map(function (s, i) {
-            const active = job.stage === s[0];
-            const passed = stageIndex > i || job.status === 'done';
-            return h('span', {
-              key: s[0],
-              style: {
-                ...small,
-                padding: '2px 8px',
-                borderRadius: '999px',
-                border: '1px solid rgba(128,128,128,0.35)',
-                background: active ? 'rgba(120,170,255,0.22)' : 'transparent',
-                opacity: passed ? 0.55 : active ? 1 : 0.8,
-                fontWeight: active ? 600 : 400,
-              },
-            }, (passed ? '✓ ' : '') + s[1]);
-          }),
-          total ? h('span', { style: { ...small, opacity: 0.7 } }, '镜头 ' + done + '/' + total) : null
+      /* ---------------- 步骤条 ---------------- */
+      const stageIndex = job ? STEPS.findIndex(function (s) { return s.key === job.stage; }) : -1;
+      const stepper = h('div', { style: { display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap', margin: '10px 0' } },
+        STEPS.map(function (s, i) {
+          const active = job && job.stage === s.key;
+          const passed = job && (stageIndex > i || job.status === 'done');
+          return h('span', {
+            key: s.key,
+            style: {
+              ...small, padding: '3px 10px', borderRadius: '999px',
+              border: '1px solid ' + (active ? 'rgba(120,170,255,0.8)' : 'rgba(128,128,128,0.3)'),
+              background: active ? 'rgba(120,170,255,0.18)' : 'transparent',
+              opacity: passed ? 0.55 : 1, fontWeight: active ? 600 : 400,
+            },
+          }, (passed ? '✓ ' : '') + s.label);
+        })
+      );
+
+      /* ---------------- 分镜卡片 ---------------- */
+      function shotCard(shot) {
+        const open = openShot === shot.index;
+        const frameUrl = job && shot.frameFile
+          ? '/api/comfyui-music-mv/frame-img?id=' + encodeURIComponent(job.id) + '&index=' + shot.index + '&v=' + bust
+          : null;
+        const videoUrl = job && shot.video
+          ? '/api/comfyui-music-mv/clip?id=' + encodeURIComponent(job.id) + '&index=' + shot.index + '&v=' + bust
+          : null;
+        const badge = shot.videoStatus === 'done' ? '🎬 视频' : shot.videoStatus === 'running' ? '⏳ 出视频'
+          : shot.frameStatus === 'done' ? '🖼 静帧' : shot.frameStatus === 'running' ? '⏳ 出静帧' : '· 待生成';
+        return h('div', { key: shot.index, style: { ...card } },
+          h('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '6px 8px', borderBottom: '1px solid rgba(128,128,128,0.16)' } },
+            h('div', { style: { ...small, fontWeight: 600 } }, (shot.index + 1) + '. ' + (shot.label || '')),
+            h('span', { style: { ...small, opacity: 0.7 } }, badge)
+          ),
+          h('div', {
+            style: { position: 'relative', aspectRatio: '16/9', background: 'rgba(0,0,0,0.25)', cursor: 'pointer' },
+            onClick: function () { setOpenShot(open ? null : shot.index); },
+          },
+            frameUrl ? h('img', { src: frameUrl, alt: '', style: { width: '100%', height: '100%', objectFit: 'cover', display: 'block' } }) : null,
+            !frameUrl ? h('div', { style: { ...muted, position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center' } }, '还没有静帧') : null,
+            shot.frameFromTail ? h('span', { style: { position: 'absolute', left: '6px', top: '6px', fontSize: '11px', padding: '1px 6px', borderRadius: '999px', background: 'rgba(0,0,0,0.55)', color: '#9ecbff' } }, '末帧接龙') : null
+          ),
+          h('div', { style: { padding: '6px 8px', display: 'flex', flexDirection: 'column', gap: '4px' } },
+            h('div', { style: { ...small, opacity: 0.75 } }, shot.start + '-' + shot.end + 's · ' + (shot.section || '')),
+            h('div', { style: { ...muted } },
+              [shot.size, shot.elevation, shot.horizontal].filter(Boolean).join('·') + ' ｜ ' + (shot.move || '') + ' ｜ ' + (shot.light || '')),
+            h('div', { style: { display: 'flex', gap: '6px', flexWrap: 'wrap' } },
+              h('button', { className: 'cfl-chip', style: { fontSize: '11px' }, disabled: !!busy || running || !job, onClick: function () { regenFrame(shot.index); } }, '🔄 换一张'),
+              videoUrl ? h('button', {
+                className: 'cfl-chip', style: { fontSize: '11px' },
+                onClick: function () { window.open(videoUrl, '_blank'); },
+              }, '▶ 看这段') : null,
+              h('button', { className: 'cfl-chip', style: { fontSize: '11px' }, onClick: function () { setOpenShot(open ? null : shot.index); } }, open ? '收起' : '参数')
+            )
+          ),
+          open
+            ? h('div', { style: { padding: '8px', borderTop: '1px solid rgba(128,128,128,0.16)', display: 'flex', flexDirection: 'column', gap: '6px' } },
+                h('div', { style: { display: 'flex', gap: '6px', flexWrap: 'wrap' } },
+                  h('label', { style: { ...small, display: 'flex', flexDirection: 'column' } }, '景别',
+                    sel('size', vocab.sizes, shot.size, function (v) { saveShot(shot.index, { size: v }); })),
+                  h('label', { style: { ...small, display: 'flex', flexDirection: 'column' } }, '俯仰',
+                    sel('elevation', vocab.elevations, shot.elevation, function (v) { saveShot(shot.index, { elevation: v }); })),
+                  h('label', { style: { ...small, display: 'flex', flexDirection: 'column' } }, '机位',
+                    sel('horizontal', vocab.horizontals, shot.horizontal, function (v) { saveShot(shot.index, { horizontal: v }); })),
+                  h('label', { style: { ...small, display: 'flex', flexDirection: 'column' } }, '运镜',
+                    sel('move', vocab.moves, shot.move, function (v) { saveShot(shot.index, { move: v }); })),
+                  h('label', { style: { ...small, display: 'flex', flexDirection: 'column' } }, '灯光',
+                    sel('light', vocab.lights, shot.light, function (v) { saveShot(shot.index, { light: v }); })),
+                  h('label', { style: { ...small, display: 'flex', flexDirection: 'column' } }, '景深',
+                    sel('dof', vocab.dofs, shot.dof, function (v) { saveShot(shot.index, { dof: v }); })),
+                  h('label', { style: { ...small, display: 'flex', flexDirection: 'column' } }, '转场',
+                    sel('transition', vocab.transitions, shot.transition, function (v) { saveShot(shot.index, { transition: v }); }))
+                ),
+                h('div', { style: { ...small, opacity: 0.65 } }, '场景'),
+                h('textarea', {
+                  value: shot.scene || '', rows: 2,
+                  onChange: function (e) { saveShot(shot.index, { scene: e.target.value }); },
+                  style: { width: '100%', resize: 'vertical', fontFamily: 'inherit', fontSize: '12px' },
+                }),
+                h('div', { style: { ...small, opacity: 0.65 } }, '动作（只写画面）'),
+                h('textarea', {
+                  value: shot.action || '', rows: 3,
+                  onChange: function (e) { saveShot(shot.index, { action: e.target.value }); },
+                  style: { width: '100%', resize: 'vertical', fontFamily: 'inherit', fontSize: '12px' },
+                }),
+                shot.framePromptText ? h('div', { style: { ...muted, fontStyle: 'italic' } }, '静帧提示词：' + shot.framePromptText.slice(0, 160)) : null
+              )
+            : null
         );
-      })();
+      }
+
+      /* ---------------- 渲染 ---------------- */
+      const planBody = plan
+        ? h('div', { style: { marginTop: '12px', border: '1px solid rgba(128,128,128,0.22)', borderRadius: '10px', padding: '10px' } },
+            h('div', { style: { display: 'flex', alignItems: 'baseline', gap: '10px', flexWrap: 'wrap' } },
+              h('div', { style: { fontSize: '15px', fontWeight: 600 } }, '《' + (plan.title || '未命名') + '》'),
+              h('span', { style: muted }, plan.duration + 's · ' + (plan.shots || []).length + ' 镜')
+            ),
+            plan.story && plan.story.logline ? h('div', { style: { ...small, marginTop: '4px' } }, '故事：' + plan.story.logline) : null,
+            plan.story && plan.story.arc ? h('div', { style: muted }, '情绪：' + plan.story.arc) : null,
+            h('div', { style: { ...muted, marginTop: '8px' } }, '主角（全片同一人）'),
+            h('textarea', {
+              value: plan.character || '', rows: 2,
+              onChange: function (e) { patchPlan({ character: e.target.value }); },
+              style: { width: '100%', resize: 'vertical', fontFamily: 'inherit', fontSize: '12px' },
+            }),
+            h('div', { style: { ...muted, marginTop: '6px' } }, '曲风 / 歌词（喂给 YuE2）'),
+            h('textarea', {
+              value: plan.style || '', rows: 1,
+              onChange: function (e) { patchPlan({ style: e.target.value }); },
+              style: { width: '100%', resize: 'vertical', fontFamily: 'inherit', fontSize: '12px', marginBottom: '4px' },
+            }),
+            h('textarea', {
+              value: plan.lyrics || '', rows: 8,
+              onChange: function (e) { patchPlan({ lyrics: e.target.value }); },
+              style: { width: '100%', resize: 'vertical', fontFamily: 'inherit', fontSize: '12px' },
+            }),
+            h('div', { style: { display: 'flex', gap: '8px', flexWrap: 'wrap', marginTop: '10px' } },
+              h('button', { className: 'cfl-chip', style: { fontWeight: 600 }, disabled: !!busy || running, onClick: function () { startRun('frames'); } }, '① 出歌 + 定妆 + 静帧'),
+              job && job.status === 'paused' ? h('button', { className: 'cfl-chip', style: { fontWeight: 600 }, disabled: !!busy, onClick: function () { continueRun('videos'); } }, '② 出视频 + 合成') : null,
+              h('button', { className: 'cfl-chip', disabled: !!busy || running, onClick: function () { startRun('all'); } }, '一键到底'),
+              h('label', { style: { display: 'flex', alignItems: 'center', gap: '5px', ...small } },
+                h('input', { type: 'checkbox', checked: cfg.tailLink, onChange: function (e) { setCfg(function (p) { return { ...p, tailLink: e.target.checked }; }); } }),
+                '末帧接龙'
+              )
+            )
+          )
+        : null;
 
       return h('div', { style: { padding: '4px 2px' } },
-        h('div', { style: { display: 'flex', alignItems: 'baseline', gap: '10px', marginBottom: '4px', flexWrap: 'wrap' } },
+        h('div', { style: { display: 'flex', alignItems: 'baseline', gap: '10px', flexWrap: 'wrap' } },
           h('h2', { style: { margin: 0, fontSize: '18px' } }, '音乐 MV'),
-          h('span', { style: mutedText },
-            online
-              ? 'ComfyUI ' + meta.comfyui.version + ' · ' + meta.comfyui.device + (vram !== null ? ' · 空闲 ' + vram + ' GB' : '')
+          h('span', { style: muted },
+            online ? 'ComfyUI ' + meta.comfyui.version + (vram !== null ? ' · 空闲 ' + vram + ' GB' : '')
               : metaError ? '状态未知：' + metaError
-              : !meta ? '正在连接 ComfyUI…'
-              : 'ComfyUI 离线'),
-          online ? null : h('button', { className: 'cfl-chip', style: { fontSize: '11px' }, onClick: function () { loadMeta(0); } }, '重试连接')
+              : !meta ? '正在连接…' : 'ComfyUI 离线'),
+          online ? null : h('button', { className: 'cfl-chip', style: { fontSize: '11px' }, onClick: function () { loadMeta(0); } }, '重试')
         ),
-        h('div', { style: { ...small, opacity: 0.6, marginBottom: '10px' } },
-          '主题 → 剧本歌词 → 每镜 ' + ((meta && meta.limits && meta.limits.shotMinSeconds) || 5) + '–' + ((meta && meta.limits && meta.limits.shotMaxSeconds) || 15) + ' 秒视频 → 拼成一支 MV，音轨压整首原曲'),
+        h('div', { style: { ...muted, marginTop: '2px' } }, '主题 → 剧本 → 出歌 → 定妆 → 每镜静帧（可改可重 roll）→ 末帧接龙出视频 → 拼成一支 MV'),
+        stepper,
 
-        // 1. 主题
-        h('div', null,
-          h('div', { style: { ...small, opacity: 0.7, marginBottom: '4px' } }, '① 主题：一句话说清想拍什么'),
+        // ① 主题
+        h('div', { style: { marginTop: '4px' } },
           h('textarea', {
             value: cfg.theme,
-            onChange: function (e) { setCfg(function (prev) { return { ...prev, theme: e.target.value }; }); },
+            onChange: function (e) { setCfg(function (p) { return { ...p, theme: e.target.value }; }); },
             rows: 2,
-            placeholder: '例如：失恋的男生在雨夜街头走了很久，最后在天亮时笑了一下',
+            placeholder: '一句话说清想拍什么：失恋的男生在雨夜街头走了很久，最后在天亮时笑了一下',
             style: { width: '100%', resize: 'vertical', fontFamily: 'inherit', fontSize: '13px' },
           })
         ),
-
-        h('div', { style: { ...row, marginTop: '10px' } },
+        h('div', { style: { display: 'flex', flexWrap: 'wrap', gap: '12px', alignItems: 'flex-end', marginTop: '8px' } },
           num('歌长(秒)', 'duration', 15, 600, 5),
           num('像素(MP)', 'megapixels', 0.2, 1.0, 0.05),
-          h('label', { style: { display: 'flex', flexDirection: 'column', gap: '2px', ...small } },
-            '比例',
+          h('label', { style: { display: 'flex', flexDirection: 'column', gap: '2px', ...small } }, '比例',
             h('select', {
               value: cfg.aspectRatio,
-              onChange: function (e) { setCfg(function (prev) { return { ...prev, aspectRatio: e.target.value }; }); },
-            }, ASPECTS.map(function (a) { return h('option', { key: a[0], value: a[0] }, a[1]); }))
-          ),
-          h('label', { style: { display: 'flex', flexDirection: 'column', gap: '2px', ...small } },
-            '曲风（选填）',
-            h('input', {
-              type: 'text',
-              value: cfg.style,
-              placeholder: '留空让 AI 定',
-              onChange: function (e) { setCfg(function (prev) { return { ...prev, style: e.target.value }; }); },
-              style: { width: '220px' },
-            })
-          ),
-          h('label', { style: { display: 'flex', alignItems: 'center', gap: '6px', ...small } },
-            h('input', {
-              type: 'checkbox',
-              checked: cfg.autoHero,
-              onChange: function (e) { setCfg(function (prev) { return { ...prev, autoHero: e.target.checked }; }); },
-            }),
-            '自动生成主角定妆图'
-          ),
-          h('button', {
-            className: 'cfl-chip',
-            disabled: busy !== '' || running,
-            onClick: makePlan,
-            style: { fontWeight: 600 },
-          }, busy === '正在写剧本…' ? '写剧本中…' : '🎬 生成剧本')
+              onChange: function (e) { setCfg(function (p) { return { ...p, aspectRatio: e.target.value }; }); },
+            }, ASPECTS.map(function (a) { return h('option', { key: a[0], value: a[0] }, a[1]); }))),
+          h('button', { className: 'cfl-chip', style: { fontWeight: 600 }, disabled: !!busy || running, onClick: makePlan },
+            busy === '正在写剧本…' ? '写剧本中…' : '🎬 生成剧本')
         ),
 
-        error ? h('div', { style: { color: '#e05c5c', fontSize: '13px', marginTop: '10px' } }, error) : null,
-        busy && busy !== '正在写剧本…' ? h('div', { style: { ...small, opacity: 0.7, marginTop: '8px' } }, busy) : null,
+        error ? h('div', { style: { color: '#e05c5c', fontSize: '13px', marginTop: '8px' } }, error) : null,
+        busy ? h('div', { style: { ...muted, marginTop: '6px' } }, busy) : null,
 
-        // 2. 剧本
-        plan
-          ? h('div', { style: { marginTop: '14px', ...box } },
-              h('div', { style: { display: 'flex', alignItems: 'baseline', gap: '10px', flexWrap: 'wrap' } },
-                h('div', { style: { fontSize: '15px', fontWeight: 600 } }, '《' + (plan.title || '未命名') + '》'),
-                h('span', { style: mutedText }, plan.duration + 's · ' + shotTotal + ' 个镜头' + (planModel ? ' · ' + planModel : ''))
-              ),
-              story.logline ? h('div', { style: { ...small, marginTop: '6px' } }, '故事：' + story.logline) : null,
-              story.arc ? h('div', { style: mutedText }, '情绪：' + story.arc) : null,
-              story.ending ? h('div', { style: mutedText }, '结尾：' + story.ending) : null,
-              story.notes ? h('div', { style: { ...mutedText, fontStyle: 'italic' } }, '阐述：' + story.notes) : null,
+        planBody,
 
-              h('div', { style: { marginTop: '10px', ...small, opacity: 0.7 } }, '主角（全片同一个人，可改）'),
-              h('textarea', {
-                value: plan.character || '',
-                onChange: function (e) { patchPlan({ character: e.target.value }); },
-                rows: 2,
-                style: { width: '100%', resize: 'vertical', fontFamily: 'inherit', fontSize: '12px' },
-              }),
-
-              h('div', { style: { marginTop: '10px', ...small, opacity: 0.7 } }, '曲风 + 歌词（会直接喂给 YuE2，可改）'),
-              h('textarea', {
-                value: plan.style || '',
-                onChange: function (e) { patchPlan({ style: e.target.value }); },
-                rows: 1,
-                style: { width: '100%', resize: 'vertical', fontFamily: 'inherit', fontSize: '12px', marginBottom: '4px' },
-              }),
-              h('textarea', {
-                value: plan.lyrics || '',
-                onChange: function (e) { patchPlan({ lyrics: e.target.value }); },
-                rows: 10,
-                style: { width: '100%', resize: 'vertical', fontFamily: 'inherit', fontSize: '12px' },
-              }),
-
-              h('div', { style: { marginTop: '12px', ...small, opacity: 0.7 } }, '分镜表（点开可改画面描述）'),
-              ...(plan.shots || []).map(function (s) {
-                const open = openShot === s.index;
-                return h('div', { key: s.index, style: { borderTop: s.index === 0 ? 'none' : '1px solid rgba(128,128,128,0.18)', padding: '6px 0' } },
-                  h('div', {
-                    style: { display: 'flex', gap: '8px', alignItems: 'baseline', cursor: 'pointer', ...small },
-                    onClick: function () { setOpenShot(open ? null : s.index); },
-                  },
-                    h('span', { style: { opacity: 0.55, minWidth: '58px' } }, s.start + '-' + s.end + 's'),
-                    h('span', { style: { fontWeight: 600 } }, (s.index + 1) + '. ' + (s.label || '')),
-                    s.section ? h('span', { style: { opacity: 0.55 } }, '对位 ' + s.section) : null,
-                    s.beat ? h('span', { style: { opacity: 0.55 } }, '· ' + s.beat) : null,
-                    h('span', { style: { marginLeft: 'auto', opacity: 0.5 } }, open ? '收起' : '展开')
-                  ),
-                  open
-                    ? h('div', { style: { marginTop: '4px' } },
-                        s.camera || s.transition
-                          ? h('div', { style: { ...mutedText, marginBottom: '4px' } },
-                              '运镜：' + (s.camera || '—') + (s.transition ? ' ｜ 转场：' + s.transition : ''))
-                          : null,
-                        h('textarea', {
-                          value: s.prompt || '',
-                          onChange: function (e) { patchShot(s.index, { prompt: e.target.value }); },
-                          rows: 3,
-                          style: { width: '100%', resize: 'vertical', fontFamily: 'inherit', fontSize: '12px' },
-                        })
-                      )
-                    : h('div', { style: { ...mutedText, paddingLeft: '58px' } }, s.prompt)
-                );
-              }),
-
-              h('div', { style: { ...row, marginTop: '12px' } },
-                h('button', {
-                  className: 'cfl-chip',
-                  disabled: busy !== '' || running,
-                  onClick: start,
-                  style: { fontWeight: 600 },
-                }, running ? '生成中…' : '🎥 开始生成 MV'),
-                h('span', { style: mutedText }, '整支要跑很久（每镜可能十几分钟），可以关掉页面，任务在后台跑')
-              )
-            )
-          : null,
-
-        // 3. 进度
         job
-          ? h('div', { style: { marginTop: '14px', ...box } },
+          ? h('div', { style: { marginTop: '14px' } },
               h('div', { style: { display: 'flex', alignItems: 'baseline', gap: '10px', flexWrap: 'wrap' } },
                 h('span', { style: { fontSize: '13px', fontWeight: 600 } }, job.id),
-                h('span', { style: small }, job.status + (job.stageLabel ? ' · ' + job.stageLabel : '') + (job.elapsedSeconds ? ' · ' + job.elapsedSeconds + 's' : '')),
-                job.song && job.song.duration ? h('span', { style: mutedText }, '歌 ' + Math.round(job.song.duration) + 's') : null
+                h('span', { style: small }, job.status + (job.stageLabel ? ' · ' + job.stageLabel : '')),
+                job.song && job.song.duration ? h('span', { style: muted }, '歌 ' + Math.round(job.song.duration) + 's') : null,
+                job.song && job.song.file ? h('audio', { src: '/api/comfyui-music-mv/song?id=' + encodeURIComponent(job.id) + '&v=' + bust, controls: true, style: { height: '30px', maxWidth: '320px' } }) : null
               ),
-              progressBar,
-              job.error ? h('div', { style: { color: '#e05c5c', fontSize: '12px' } }, job.error) : null,
+              job.error ? h('div', { style: { color: '#e05c5c', fontSize: '12px', marginTop: '4px' } }, job.error) : null,
 
-              job.song && job.song.file
-                ? h('div', { style: { marginTop: '6px' } },
-                    h('div', { style: { ...small, opacity: 0.6 } }, '歌：'),
-                    h('audio', { src: '/api/comfyui-music-mv/song?id=' + encodeURIComponent(job.id), controls: true, style: { width: '100%', maxWidth: '520px' } })
-                  )
-                : null,
-
-              Array.isArray(job.shots) && job.shots.length
-                ? h('div', { style: { marginTop: '8px' } },
-                    job.shots.map(function (s) {
-                      const color = s.status === 'done' ? '#4caf7d' : s.status === 'failed' ? '#e05c5c' : s.status === 'running' ? '#e0a030' : undefined;
-                      return h('div', { key: s.index, style: { display: 'flex', gap: '8px', alignItems: 'center', ...small, padding: '2px 0' } },
-                        h('span', { style: { opacity: 0.5, minWidth: '58px' } }, s.start + '-' + s.end + 's'),
-                        h('span', { style: { color, minWidth: '64px' } }, s.status),
-                        h('span', { style: { flex: 1, opacity: 0.75, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } }, s.label || s.prompt || ''),
-                        s.error ? h('span', { style: { color: '#e05c5c' } }, s.error) : null,
-                        s.status === 'done'
-                          ? h('button', {
-                              className: 'cfl-chip',
-                              style: { fontSize: '11px' },
-                              onClick: function () {
-                                window.open('/api/comfyui-music-mv/clip?id=' + encodeURIComponent(job.id) + '&index=' + s.index, '_blank');
-                              },
-                            }, '看这一段')
-                          : null
-                      );
-                    })
-                  )
+              job.shots && job.shots.length
+                ? h('div', { style: { display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))', gap: '10px', marginTop: '10px' } },
+                    job.shots.map(shotCard))
                 : null,
 
               job.status === 'done' && job.file
-                ? h('div', { style: { marginTop: '10px' } },
-                    h('video', { src: '/api/comfyui-music-mv/media?id=' + encodeURIComponent(job.id), controls: true, style: { width: '100%', maxWidth: '720px', borderRadius: '6px' } }),
-                    h('a', {
-                      href: '/api/comfyui-music-mv/media?id=' + encodeURIComponent(job.id),
-                      target: '_blank', rel: 'noreferrer', style: { ...small, marginLeft: '8px' },
-                    }, '打开原文件')
+                ? h('div', { style: { marginTop: '12px' } },
+                    h('video', { src: '/api/comfyui-music-mv/media?id=' + encodeURIComponent(job.id) + '&v=' + bust, controls: true, style: { width: '100%', maxWidth: '760px', borderRadius: '8px' } }),
+                    h('div', { style: { ...small, marginTop: '4px' } },
+                      h('a', { href: '/api/comfyui-music-mv/media?id=' + encodeURIComponent(job.id), target: '_blank', rel: 'noreferrer' }, '打开原文件'),
+                      h('button', { className: 'cfl-chip', style: { fontSize: '11px', marginLeft: '8px' }, disabled: !!busy, onClick: restitch }, '重新合成')
+                    )
                   )
                 : null
             )
           : null,
 
-        // 4. 历史
         history.length
           ? h('div', { style: { marginTop: '18px' } },
               h('div', { style: { fontSize: '13px', fontWeight: 600, marginBottom: '6px' } }, '最近生成'),
-              history.slice(0, 10).map(function (item) {
-                return h('div', {
-                  key: item.id,
-                  style: { display: 'flex', gap: '8px', alignItems: 'center', ...small, padding: '3px 0' },
-                },
+              history.slice(0, 8).map(function (item) {
+                return h('div', { key: item.id, style: { display: 'flex', gap: '8px', alignItems: 'center', ...small, padding: '3px 0' } },
                   h('span', { style: { opacity: 0.6 } }, new Date(item.createdAt).toLocaleString()),
                   h('span', null, item.status),
                   h('span', { style: { opacity: 0.7 } }, (item.plan && item.plan.title ? '《' + item.plan.title + '》' : '') + (item.stageLabel ? ' · ' + item.stageLabel : '')),
-                  item.status === 'done'
-                    ? h('a', { href: '/api/comfyui-music-mv/media?id=' + encodeURIComponent(item.id), target: '_blank', rel: 'noreferrer' }, '打开')
-                    : h('span', { style: { opacity: 0.5 } }, item.error || ''),
-                  h('button', {
-                    style: { all: 'unset', cursor: 'pointer', opacity: 0.6 },
-                    title: '查看',
-                    onClick: function () { setJob(item); },
-                  }, '↗')
+                  h('button', { style: { all: 'unset', cursor: 'pointer', opacity: 0.6 }, onClick: function () { setJob(item); } }, '↗')
                 );
               })
             )

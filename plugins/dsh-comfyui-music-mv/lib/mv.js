@@ -9,6 +9,8 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 
 import { buildPrompt as buildRef2vPrompt } from './ref2v.js';
+import { buildPrompt as buildT2iPrompt } from './t2i.js';
+import { MOVES, LIGHTS, cameraFragment } from './shotlang.js';
 
 export const LIMITS = {
   shotMinSeconds: 5,
@@ -158,19 +160,39 @@ export function normalizePlan(data, opts = {}) {
 
   const shots = timeline.map((slot, i) => {
     const src = rawShots[i] || {};
-    const prompt = String((src && (src.prompt || src.description)) || '').replace(/\s+/g, ' ').trim();
+    const text = (v) => String(v || '').replace(/\s+/g, ' ').trim();
+    const action = text(src.action || src.prompt || src.description);
     return {
       index: i,
       start: slot.start,
       end: slot.end,
       seconds: slot.seconds,
-      label: String((src && (src.label || src.title)) || `镜头 ${i + 1}`).trim(),
-      section: String((src && (src.section || src.lyricSection)) || '').trim(),
-      beat: String((src && (src.beat || src.emotion)) || '').trim(),
-      camera: String((src && (src.camera || src.shot)) || '').trim(),
-      transition: String((src && (src.transition || src.cut)) || '').trim(),
-      prompt,
-      seed: Number.isFinite(Number(src && src.seed)) ? Math.trunc(Number(src.seed)) : null,
+      label: text(src.label || src.title) || `镜头 ${i + 1}`,
+      section: text(src.section || src.lyricSection),
+      beat: text(src.beat || src.emotion),
+      // 专业分镜字段：场景 / 时间 / 景别 / 方向 / 俯仰 / 运镜 / 灯光 / 景深 / 转场
+      scene: text(src.scene || src.location),
+      time: text(src.time),
+      size: text(src.size) || 'medium',
+      horizontal: text(src.horizontal) || 'front',
+      elevation: text(src.elevation) || 'eye',
+      move: text(src.move || src.movement) || 'static',
+      light: text(src.light || src.lighting) || 'natural',
+      dof: text(src.dof) || 'medium',
+      transition: text(src.transition) || 'cut',
+      action,
+      dialogue: text(src.dialogue),
+      prompt: action,
+      seed: Number.isFinite(Number(src.seed)) ? Math.trunc(Number(src.seed)) : null,
+      // 运行时产物：静帧 / 历史版本 / 视频 / 末帧
+      frame: null,
+      frameFile: null,
+      frameVersions: [],
+      video: null,
+      comfyVideo: null,
+      tailFrame: null,
+      frameAt: null,
+      videoAt: null,
     };
   });
 
@@ -197,31 +219,70 @@ export function normalizePlan(data, opts = {}) {
   };
 }
 
-/* --------------------------- 单镜头图 --------------------------- */
+/* --------------------------- 提示词组装 --------------------------- */
 
-/** 拼出这一镜最终给模型的提示词：主角一致性 + 镜头内容 + 运镜/情绪 + 全片风格。 */
-export function composeShotPrompt(plan, shot) {
+/**
+ * 静帧（图片）提示词：这一镜的"定妆照"。
+ * 结构化字段在这里咬合：人物 + 场景 + 时间 + 动作 + 景别/角度/运镜/灯光/景深 + 全片风格。
+ */
+export function composeFramePrompt(plan, shot) {
   const parts = [];
   if (plan.character) parts.push(plan.character.replace(/\s+/g, ' ').trim());
-  parts.push(shot.prompt);
-  if (shot.camera && !shot.prompt.includes(shot.camera)) parts.push(shot.camera);
+  if (shot.scene) parts.push(shot.scene);
+  if (shot.time) parts.push(shot.time);
+  if (shot.action) parts.push(shot.action);
+  parts.push(cameraFragment(shot));
   if (shot.beat) parts.push(`情绪：${shot.beat}`);
-  if (plan.style) parts.push(`整体风格：${plan.style}`);
-  parts.push('电影感，画面稳定，不要文字、不要水印');
+  if (plan.style) parts.push(plan.style);
+  parts.push('电影剧照，人物与场景细节清晰，不要文字、不要水印');
   return parts.filter(Boolean).join('。');
 }
 
+/** 生成这一镜的静帧图（Krea2）。 */
+export async function buildFramePrompt(plan, shot, options = {}) {
+  const promptText = composeFramePrompt(plan, shot);
+  const built = await buildT2iPrompt({
+    prompt: promptText,
+    aspectRatio: options.aspectRatio || '16:9 (Widescreen)',
+    megapixels: options.megapixels || 1.0,
+    steps: options.steps || 8,
+    batchSize: 1,
+    expand: options.expand !== false,
+    seed: options.seed,
+    filenamePrefix: options.filenamePrefix || 'mv_frame',
+  });
+  return { ...built, promptText };
+}
+
 /**
- * 生成单镜头的 ref2v 图。heroImage 是主角定妆图（ComfyUI input 里的文件名），
- * 所有镜头共用它，这是人物不跑的唯一可靠手段。
+ * 视频提示词：静帧当首帧、定妆图当身份参考，正文只写"怎么动"。
+ * 画面长什么样已经由静帧定死了，这里再描述一遍场景只会跟首帧打架。
  */
-export async function buildShotPrompt(plan, shot, options = {}) {
+export function composeVideoPrompt(plan, shot, opts = {}) {
+  const pics = [];
+  if (opts.frameImage) pics.push('以 <Picture 1> 作为本镜的开场画面，人物、服装、场景、光线都与它一致');
+  if (opts.heroImage) pics.push(opts.frameImage ? '<Picture 2> 是同一人物的身份参考' : '<Picture 1> 是同一人物的身份参考');
+  const head = pics.length ? pics.join('；') + '。' : '';
+  const move = (MOVES.find((m) => m.key === shot.move) || MOVES[0]).en;
+  const light = (LIGHTS.find((l) => l.key === shot.light) || LIGHTS[0]).en;
+  const body = [
+    shot.action ? `${shot.action}。` : '',
+    `镜头：${move}。`,
+    `光线：${light}。`,
+    '人物表演自然连贯，口型随音乐起伏，画面稳定，不要文字、不要水印、不要字幕。',
+  ].filter(Boolean).join('');
+  return head + body;
+}
+
+/** 生成这一镜的 ref2v 图：首帧=静帧，身份=定妆图。 */
+export async function buildShotVideoPrompt(plan, shot, options = {}) {
   const images = [];
-  let promptText = composeShotPrompt(plan, shot);
-  if (options.heroImage) {
-    images.push(options.heroImage);
-    promptText = `<Picture 1> 是全片主角（同一张脸、同一发型、同一套服装，不要变）。` + promptText;
-  }
+  if (options.frameImage) images.push(options.frameImage);
+  if (options.heroImage) images.push(options.heroImage);
+  const promptText = composeVideoPrompt(plan, shot, {
+    frameImage: options.frameImage,
+    heroImage: options.heroImage,
+  });
   const built = await buildRef2vPrompt({
     prompt: promptText,
     images,
@@ -234,6 +295,26 @@ export async function buildShotPrompt(plan, shot, options = {}) {
     refImageSize: options.refImageSize || 'match',
   });
   return { ...built, promptText };
+}
+
+/* --------------------------- 末帧衔接 --------------------------- */
+
+/**
+ * 从一段视频里抽最后一帧存成图片。
+ * 没有 ffmpeg 也能做：LoadVideo → Video Slice(掐最后 0.12 秒) → GetVideoComponents → SaveImage。
+ * 抽出来的图会直接当下一镜的首帧，这就是"末帧接龙"。
+ */
+export function buildTailFramePrompt({ video, startTime, filenamePrefix = 'mv_tail' }) {
+  const start = Math.max(0, Number(startTime) || 0);
+  return {
+    '1': { class_type: 'LoadVideo', inputs: { file: video } },
+    '2': {
+      class_type: 'Video Slice',
+      inputs: { video: ['1', 0], start_time: start, duration: 0.12, strict_duration: false },
+    },
+    '3': { class_type: 'GetVideoComponents', inputs: { video: ['2', 0] } },
+    '4': { class_type: 'SaveImage', inputs: { images: ['3', 0], filename_prefix: filenamePrefix } },
+  };
 }
 
 /* --------------------------- 拼接图 --------------------------- */
@@ -330,6 +411,39 @@ export async function fetchVideo(client, entry, options = {}) {
 /** 产物落盘。 */
 export async function saveVideo(dataDir, filename, buffer) {
   const dir = path.join(dataDir, 'mv');
+  await fs.mkdir(dir, { recursive: true });
+  const file = path.join(dir, filename);
+  await fs.writeFile(file, buffer);
+  return file;
+}
+
+/** 取 history 里某个保存节点产出的图片条目（SaveImage 会把 batch 拆成多条，取最后一张）。 */
+export function firstOutputImage(entry, nodeId) {
+  const nodes = nodeId ? [String(nodeId)] : Object.keys(entry.outputs || {});
+  const items = [];
+  for (const id of nodes) {
+    const output = (entry.outputs || {})[id];
+    if (!output) continue;
+    for (const item of output.images || []) {
+      if (item && item.filename && /\.(png|jpg|jpeg|webp)$/i.test(item.filename)) items.push(item);
+    }
+  }
+  return items.length ? items[items.length - 1] : null;
+}
+
+/** 把 ComfyUI 输出目录里的图片取回来。 */
+export async function fetchComfyImage(client, item) {
+  const url = client.host + '/view?filename=' + encodeURIComponent(item.filename)
+    + '&subfolder=' + encodeURIComponent(item.subfolder || '')
+    + '&type=' + encodeURIComponent(item.type || 'output');
+  const res = await fetch(url, { signal: AbortSignal.timeout(120000) });
+  if (!res.ok) throw new Error('取回图片失败：HTTP ' + res.status);
+  return Buffer.from(await res.arrayBuffer());
+}
+
+/** 静帧落盘。 */
+export async function saveFrame(dataDir, filename, buffer) {
+  const dir = path.join(dataDir, 'frames');
   await fs.mkdir(dir, { recursive: true });
   const file = path.join(dir, filename);
   await fs.writeFile(file, buffer);
