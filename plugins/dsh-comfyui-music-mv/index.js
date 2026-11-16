@@ -20,7 +20,7 @@ import {
   LIMITS, audioDuration, buildFramePrompt, buildShotVideoPrompt, buildTailFramePrompt,
   buildSliceAudioPrompt, buildStitchPrompt, fetchVideo, fetchComfyImage, fetchComfyAudio,
   firstOutputImage, saveVideo, saveFrame, normalizePlan, parsePlanJson, suggestShotCount,
-  charactersOf, castOf, lintPlan, segmentLyrics, composeFramePrompt, splitLook, extendSilentBeat, breakLyricDup, heroFormSpecs, trimLongActions, mergeScenes, cleanLogline,
+  charactersOf, castOf, lintPlan, segmentLyrics, composeFramePrompt, splitLook, extendSilentBeat, breakLyricDup, heroFormSpecs, trimLongActions, mergeScenes, cleanLogline, expandDialogueBeats,
 } from './lib/mv.js';
 import { vocab, cameraSummary } from './lib/shotlang.js';
 import { probeFfmpeg, stitchWithTransitions, concatAudio, composeTransHero } from './lib/ffmpeg.js';
@@ -1174,7 +1174,14 @@ async function execute(job, params) {
   await jobPatch(job.id, { stage: 'plan', stageLabel: '写剧本', error: null });
   let plan;
   if (params.plan && typeof params.plan === 'object') {
-    plan = normalizePlan(params.plan, { duration: params.duration, shotCount: params.shotCount });
+    // 对话长的镜头先拆成正反打短镜，再排时间轴（拆完镜头数会变多，所以要在 normalizePlan 之前做）
+  {
+    const raw = Array.isArray(params.plan && params.plan.shots) ? params.plan.shots : [];
+    const grown = expandDialogueBeats(raw);
+    // 拆镜之后镜头数变多了，shotCount 必须跟着涨，否则 normalizePlan 会把拆出来的短镜又截掉
+    params = { ...params, plan: { ...params.plan, shots: grown }, shotCount: grown.length };
+  }
+  plan = normalizePlan(params.plan, { duration: params.duration, shotCount: params.shotCount });
   } else {
     // 注意：ctx 不能塞进 params —— 任务会被写成 json，ctx 是循环引用。
     const generated = await generatePlan(hostCtx, {
@@ -1278,7 +1285,11 @@ async function execute(job, params) {
      结尾那一镜（回扣）会被悄悄扔掉。这里锁死原来的镜头数。 */
   const keepCount = Number(params.shotCount) || (plan.shots ? plan.shots.length : 0) || undefined;
   const wantedDuration = plan.duration;
-  plan = normalizePlan(plan, { duration: songDuration, shotCount: keepCount });
+  {
+    const grown = expandDialogueBeats(plan.shots);
+    plan = { ...plan, shots: grown };
+  }
+  plan = normalizePlan(plan, { duration: songDuration, shotCount: keepCount || plan.shots.length });
   const songShort = wantedDuration && songDuration < wantedDuration - 1;
   await jobPatch(job.id, songShort ? {
     songWarning: `歌只出了 ${songDuration.toFixed(1)}s（要 ${wantedDuration}s），时间轴已按真实歌长压缩成每镜 ${(songDuration / Math.max(1, plan.shots.length)).toFixed(1)}s`,

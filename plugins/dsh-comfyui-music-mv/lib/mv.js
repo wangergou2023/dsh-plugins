@@ -117,6 +117,64 @@ export function allocateTimeline(duration, count) {
  * 全片等长是业余感的来源之一——MV 的节奏本来就该跟着歌走。
  * meta[i] = { section, move }，权重越高镜越长。
  */
+/**
+ * 对话拆镜：一段两个人说话、又超过 7 秒的镜头，应该被剪成正反打短镜，
+ * 每个 2.5–4 秒——这是"电影感"和"PPT 感"的分界（一个 12 秒的固定双人镜看着就假）。
+ *
+ * 拆的时候焦点必须交替（cast 首元素互换），否则拆出来的全是同一个人的重复镜。
+ */
+export function expandDialogueBeats(rawShots, opts = {}) {
+  const minSeconds = Number(opts.minSeconds) || 7;
+  const maxParts = Number(opts.maxParts) || 3;
+  const shots = Array.isArray(rawShots) ? rawShots : [];
+  const out = [];
+  for (const raw of shots) {
+    const cast = Array.isArray(raw && raw.cast) ? raw.cast : [];
+    const dialogue = String((raw && raw.dialogue) || '').trim();
+    const seconds = Number(raw && raw.end) - Number(raw && raw.start);
+    const section = String((raw && raw.section) || '');
+    // 副歌不拆：副歌要的是"一口气不换气"的完整段落
+    const chorusy = /chorus/i.test(section);
+    if (cast.length < 2 || !dialogue || chorusy || !(seconds >= minSeconds)) {
+      out.push(raw);
+      continue;
+    }
+    const clauses = dialogue.split(/[，,；;、]/).map((s) => s.trim()).filter(Boolean);
+    const parts = Math.max(2, Math.min(maxParts, Math.round(seconds / 3.2)));
+    const slices = [];
+    if (clauses.length >= parts) {
+      // 按小句均分，保证每个短镜都有词
+      const per = Math.ceil(clauses.length / parts);
+      for (let i = 0; i < parts; i += 1) slices.push(clauses.slice(i * per, (i + 1) * per).join('，'));
+    } else {
+      for (let i = 0; i < parts; i += 1) slices.push(i === 0 ? dialogue : '');
+    }
+    const span = seconds / parts;
+    for (let i = 0; i < parts; i += 1) {
+      out.push({
+        ...raw,
+        label: `${String((raw && raw.label) || '').trim()}${i === 0 ? '' : `·${i + 1}`}`,
+        start: Number(raw.start) + span * i,
+        end: Number(raw.start) + span * (i + 1),
+        dialogue: slices[i] || '',
+        // 焦点交替：第一镜拍 cast[0]，第二镜拍 cast[1]
+        cast: i % 2 === 0 ? cast : [cast[1], ...cast.slice(2), cast[0]],
+        composition: 'ots',
+        // 拆出来的每一镜必须是"不同的一刻"，否则 1 镜和 3 镜会拍成同一张照片（实测过）。
+        action: i === 0
+          ? raw.action
+          : (slices[i]
+            ? `${raw.action}（同一动作的下一半：气还没换过来，话是低下去接的）`
+            : '这一镜只是反应：听着对方说，嘴没有动，眼睛先动'),
+        performance: i === 0
+          ? raw.performance
+          : `${String(raw.performance || '')}；接上一个镜头，重心已经换到另一只脚上`,
+      });
+    }
+  }
+  return out;
+}
+
 export function allocateRhythmTimeline(duration, meta = []) {
   const total = Math.max(0.1, Number(duration) || 0);
   const n = Math.max(1, meta.length);
