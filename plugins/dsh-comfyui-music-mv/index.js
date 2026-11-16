@@ -361,6 +361,7 @@ function planSystemPrompt(shotCount, duration) {
     '18. 每镜的 prop 只能选一个，并且必须真的出现在 action 里。',
     '19. 全片必须且只能有一镜 dialogue 留空字符串（放在全片 60%–80% 的位置），那一镜只靠动作和声音说完，表演密度要最高。',
     '20. composition 决定构图：两个人同框且有人在说话，写 ots（过肩——只拍主角，对方只在画面边缘虚焦）；两个人要并排被看见才写 two；只有一个人写 single。全片 ots 至少 1 镜。',
+    '21. 正反打：一段对话可以连排两镜 ots，第二镜把 cast 顺序反过来（谁在焦内就写在第一个），两镜的 scene 和 time 必须一模一样——观众看到的是同一时刻从两侧各拍一次。单段对话超过 6 秒时应该这么拆。',
     '',
     '故事规则（这条不过，画面再美也是垃圾）：',
     'A. 必须有一个「转折点」：观众在前半段以为是这件事，后半段发现是另一件事。用一句话能说清，不靠旁白解释。',
@@ -989,7 +990,12 @@ async function renderHero(client, job, plan, character, index, params) {
 async function renderFrame(client, job, plan, shot, params) {
   // 有定妆图就走"认人"链路：Qwen 参考编辑，角色长相全片锁死
   const sceneText = composeFramePrompt(plan, shot);
-  const pick = params.frameMode === 't2i' ? { refs: [], labels: [] } : refsForShot(job, shot, 2);
+  // 过肩镜只给主角一张参考图。两张开给，模型会把两个人并排画出来（实测过），
+  // 过肩就变成了两人合影——而这一镜的表演关键恰恰是"对方不在画面里"。
+  const otsFocus = String(shot.composition || '') === 'ots' && (shot.cast || []).length >= 2
+    ? { ...shot, cast: shot.cast.slice(0, 1) }
+    : shot;
+  const pick = params.frameMode === 't2i' ? { refs: [], labels: [] } : refsForShot(job, otsFocus, 2);
   if (pick.refs.length) {
     const graph = buildRefEditGraph(await refTemplate(), {
       refs: pick.refs,

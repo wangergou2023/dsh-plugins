@@ -746,7 +746,8 @@ export function composeFramePrompt(plan, shot) {
     if (shot.scene) parts.push(shot.scene);
     if (shot.time) parts.push(shot.time);
     parts.push(`主角是${a.name}（${String(a.look || '').split(/[，。；]/).slice(0, 2).join('，')}），在焦内，脸部清楚`);
-    parts.push(`画面边缘只有${b.name}的肩膀与后脑剪影，虚焦，不露脸、不做动作、不是第二个人`);
+    // 前景那位不点名：名字一出现，模型会把他的衣服/外形套到主角身上（实测第 2 镜女孩穿上了店员的制服）。
+    parts.push('画面边缘只有一个虚焦的肩膀与后脑剪影，不露脸、不做动作、不是第二个人');
     // 动作里只要出现对方的名字，模型就会把对方整只画出来，过肩立刻变三人镜。
     // 所以过肩镜只保留"不含对方名字"的句子，剩下的交给主角自己的表演。
     const cleanAction = String(shot.action || '')
@@ -1425,6 +1426,23 @@ export function lintPlan(plan) {
     multiCast.length === 0
       ? '全片没有双人镜，不适用'
       : (otsCount >= 1 ? `双人镜 ${multiCast.length} 处，其中过肩 ${otsCount} 处` : '双人镜全都写成并排站立——两人并排看镜头是最业余的构图'));
+
+  // 正反打：真正的对话戏是"他看她一眼 / 她看他一眼"，两个过肩镜互为反打。
+  // 如果连着两镜都是过肩但焦点人物没换，那不是反打，是把同一个镜头拍了两遍。
+  const otsShots = shots.filter((s) => String(s.composition || '') === 'ots');
+  let reversePairs = 0;
+  for (let i = 1; i < otsShots.length; i += 1) {
+    const a = otsShots[i - 1];
+    const b = otsShots[i];
+    const aFirst = (a.cast || [])[0];
+    const bFirst = (b.cast || [])[0];
+    if (aFirst && bFirst && aFirst !== bFirst && String(a.scene || '') === String(b.scene || '')) reversePairs += 1;
+  }
+  push('reverse', '对话用正反打（同一场景、焦点互换的两个过肩）',
+    otsShots.length < 2 || reversePairs >= 1,
+    otsShots.length < 2
+      ? '过肩镜不足两处，反打不适用'
+      : (reversePairs >= 1 ? `有 ${reversePairs} 对正反打` : '有多个过肩镜但没有一对是正反打——焦点人物从没换过，等于同一镜头拍两遍'));
 
   const passed = checks.filter((c) => c.ok).length;
   const total = checks.length || 1;
