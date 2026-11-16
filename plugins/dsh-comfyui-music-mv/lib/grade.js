@@ -26,7 +26,7 @@ async function firstExisting(list) {
   return null;
 }
 
-/** drawtext 的 text 需要把特殊字符转义掉，否则整条滤镜都坏。 */
+/** drawtext 需要把特殊字符转义掉，否则整条滤镜都坏。 */
 function escapeDrawText(text) {
   return String(text || '')
     .replace(/\\/g, '\\\\')
@@ -36,8 +36,15 @@ function escapeDrawText(text) {
     .replace(/\n/g, ' ');
 }
 
-function run(bin, args, timeoutMs = 900000) {
-  return new Promise((resolve, reject) => {
+/**
+ * 滤镜里的 Windows 路径：先统一成正斜杠，再转义盘符冒号。
+ * 直接用 path.join 出来的反斜杠会被 ffmpeg 当成转义符吞掉（实测 C:\Users\... → C:Users...）。
+ */
+function filterPath(p) {
+  return String(p).replace(/\\/g, '/').replace(/:/g, '\\:');
+}
+
+function run(bin, args, timeoutMs = 900000) {  return new Promise((resolve, reject) => {
     const child = spawn(bin, args, { windowsHide: true });
     let log = '';
     const timer = setTimeout(() => { try { child.kill(); } catch { /* ignore */ } }, timeoutMs);
@@ -78,18 +85,27 @@ export async function cinematicPass({ pluginDir, input, output, title, subtitle,
 
   // 片名：前 3.2 秒淡入淡出，落在画面左下
   const font = await firstExisting(FONT_CANDIDATES);
+  const textFiles = [];
   if (title && font) {
-    const t = escapeDrawText(title);
     const fade = "if(lt(t,0.5),t/0.5,if(gt(t,2.7),(3.2-t)/0.5,1))";
+    // Windows 路径里的冒号必须「引号内 + 反斜杠转义」才能被滤镜解析：
+    // fontfile='C:/...' 不行，fontfile=C\:/... 也不行，只有 fontfile='C\:/...' 通过。
+    const fontArg = `fontfile='${filterPath(font)}'`;
+    // 文本走 textfile：中文/标点不会碰转义规则
+    const titleTxt = path.join(path.dirname(output), 'title-' + Date.now().toString(36) + '.txt');
+    await fs.writeFile(titleTxt, String(title), 'utf8');
+    textFiles.push(titleTxt);
     filters.push(
-      `drawtext=fontfile='${font}':text='${t}':fontcolor=white@0.92:fontsize=h/11:`
+      `drawtext=${fontArg}:textfile='${filterPath(titleTxt)}':fontcolor=white@0.92:fontsize=h/11:`
       + `x=w*0.055:y=h*0.74:shadowcolor=black@0.55:shadowx=2:shadowy=2:`
       + `alpha='${fade}':enable='lt(t,3.2)'`,
     );
     if (subtitle) {
-      const s = escapeDrawText(subtitle);
+      const subTxt = path.join(path.dirname(output), 'sub-' + Date.now().toString(36) + '.txt');
+      await fs.writeFile(subTxt, String(subtitle), 'utf8');
+      textFiles.push(subTxt);
       filters.push(
-        `drawtext=fontfile='${font}':text='${s}':fontcolor=white@0.72:fontsize=h/26:`
+        `drawtext=${fontArg}:textfile='${filterPath(subTxt)}':fontcolor=white@0.72:fontsize=h/26:`
         + `x=w*0.058:y=h*0.74+h/11+8:alpha='${fade}':enable='lt(t,3.2)'`,
       );
     }
@@ -97,7 +113,8 @@ export async function cinematicPass({ pluginDir, input, output, title, subtitle,
 
   const script = path.join(path.dirname(output), 'grade-' + Date.now().toString(36) + '.txt');
   await fs.mkdir(path.dirname(output), { recursive: true });
-  await fs.writeFile(script, filters.join(',\n'), 'utf8');
+  // 注意：链内用逗号连接，不能换行——滤镜脚本里的换行会被当成链外分隔，直接解析失败
+  await fs.writeFile(script, filters.join(','), 'utf8');
 
   const args = [
     '-y', '-i', input,
@@ -111,6 +128,7 @@ export async function cinematicPass({ pluginDir, input, output, title, subtitle,
     await run(bin, args, timeoutMs);
   } finally {
     await fs.unlink(script).catch(() => {});
+    for (const f of textFiles) await fs.unlink(f).catch(() => {});
   }
   const stat = await fs.stat(output).catch(() => null);
   if (!stat || stat.size === 0) throw new Error('后处理没有产出文件');

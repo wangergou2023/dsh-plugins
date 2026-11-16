@@ -361,7 +361,7 @@ async function readLocalFile(value) {
 async function renderFrame(client, job, plan, shot, params) {
   const built = await buildFramePrompt(plan, shot, {
     aspectRatio: params.aspectRatio || '16:9 (Widescreen)',
-    megapixels: params.frameMegapixels || 1.0,
+    megapixels: params.frameMegapixels || 8.0,
     steps: params.frameSteps || 8,
     seed: params.frameSeed,
     filenamePrefix: `mv_frame/${job.id}_${shot.index + 1}`,
@@ -820,7 +820,7 @@ export function apply(ctx) {
       limits: LIMITS,
       aspects: ASPECTS,
       ffmpeg: ff.ok ? { ok: true, version: ff.version } : { ok: false, error: ff.error },
-      defaults: { duration: 60, aspectRatio: '16:9 (Widescreen)', megapixels: 0.4, shotSeconds: 8, songFormat: 'flac' },
+      defaults: { duration: 60, aspectRatio: '16:9 (Widescreen)', megapixels: 0.4, frameMegapixels: 8, shotSeconds: 8, songFormat: 'flac' },
       stages: [
         { key: 'plan', label: '写剧本' },
         { key: 'song', label: '生成歌曲' },
@@ -1097,6 +1097,14 @@ export function apply(ctx) {
         const job = jobStore.get(id);
         if (!job) { sendJson(response, 404, { error: 'not_found', id }); return; }
         if (job.status === 'running') { sendJson(response, 409, { error: 'busy', message: '这个任务还在跑' }); return; }
+        // 续跑时可以覆盖一部分参数（比如把视频像素从 0.4 提到 0.6）
+        if (body && body.params && typeof body.params === 'object') {
+          const allowed = ['megapixels', 'frameMegapixels', 'aspectRatio', 'tailLink', 'lipSync', 'grade', 'crop', 'seed'];
+          const patch = {};
+          for (const key of allowed) if (body.params[key] !== undefined) patch[key] = body.params[key];
+          job.params = { ...job.params, ...patch };
+          await jobStore.patch(id, { params: job.params });
+        }
         if (phase === 'videos' && !job.shots.some((s) => s.frame)) {
           sendJson(response, 400, { error: 'no_frames', message: '还没有静帧，先出静帧' });
           return;
