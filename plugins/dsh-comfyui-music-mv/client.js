@@ -543,6 +543,22 @@ window.__ModuleLoader__.load({
                 setCharacters(planCharacters().concat([{ name: '', look: '' }]));
               },
             }, '+ 添加角色'),
+            job ? h('button', {
+              className: 'cfl-chip', style: { fontSize: '12px' }, disabled: !!busy,
+              title: '按「原形 / 人形」各出一张重做定妆图，不动已经出好的静帧',
+              onClick: async function () {
+                setBusy('正在重出定妆图…'); setError('');
+                try {
+                  const r = await fetch('/api/comfyui-music-mv/heroes', {
+                    method: 'POST', headers: { 'content-type': 'application/json' },
+                    body: JSON.stringify({ id: job.id }),
+                  });
+                  const j = await r.json();
+                  if (!r.ok) throw new Error(j.message || j.error || ('HTTP ' + r.status));
+                  await refreshJob(job.id);
+                } catch (e) { setError(String(e && e.message || e)); } finally { setBusy(''); }
+              },
+            }, '♻ 重出定妆') : null,
             h('div', { style: { ...muted, marginTop: '6px' } }, '视觉基调（只喂画面：胶片感、调色、镜头、光线）'),
             h('textarea', {
               value: plan.look || '', rows: 2,
