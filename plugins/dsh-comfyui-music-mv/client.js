@@ -564,6 +564,7 @@ window.__ModuleLoader__.load({
             h('div', { style: { display: 'flex', gap: '8px', flexWrap: 'wrap', marginTop: '10px' } },
               h('button', { className: 'cfl-chip', style: { fontWeight: 600 }, disabled: !!busy || running, onClick: function () { startRun('frames'); } }, '① 出歌 + 定妆 + 静帧'),
               job && job.status === 'paused' ? h('button', { className: 'cfl-chip', style: { fontWeight: 600 }, disabled: !!busy, onClick: function () { continueRun('videos'); } }, '② 出视频 + 合成') : null,
+              job && job.status === 'interrupted' ? h('button', { className: 'cfl-chip', style: { fontWeight: 600 }, disabled: !!busy, onClick: function () { continueRun(job.shots && job.shots.some(function (s) { return s.frame; }) ? 'videos' : 'frames'); } }, '↻ 续跑（进程重启过）') : null,
               h('button', { className: 'cfl-chip', disabled: !!busy || running, onClick: function () { startRun('all'); } }, '一键到底'),
               h('button', { className: 'cfl-chip', disabled: !job, title: '把剧本和参数存成 json', onClick: exportPlan }, '⇩ 导出方案'),
               h('button', { className: 'cfl-chip', title: '导入之前导出的方案', onClick: importPlan }, '⇧ 导入'),

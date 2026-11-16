@@ -240,6 +240,24 @@ class JobStore {
     return job;
   }
 
+  /**
+   * 插件重载/进程退出后，旧任务还挂着 running，其实早就死了
+   * （ComfyUI 队列是空的，却一直显示"正在跑"，还把续跑挡在 409 门外）。
+   * 载入时统一标成 interrupted，面板给"续跑"。
+   */
+  async reapOrphans() {
+    await this.refresh();
+    const victims = [...this.jobs.values()].filter((job) => job.status === 'running' || job.status === 'queued');
+    if (!victims.length) return 0;
+    for (const job of victims) {
+      job.status = 'interrupted';
+      job.error = '进程重启，任务中断（可以续跑）';
+      job.updatedAt = Date.now();
+    }
+    await this.persist();
+    return victims.length;
+  }
+
   get(id) { return this.jobs.get(id) || null; }
 
   list(limit = 20) {
@@ -1037,6 +1055,12 @@ export function apply(ctx) {
   const disposers = [];
   jobStore = new JobStore(DATA_DIR);
   hostCtx = ctx;
+  // 上一次进程留下的 running 任务清成 interrupted，否则永远显示"正在跑"还挡住续跑
+  Promise.resolve()
+    .then(function () { return jobStore.ready; })
+    .then(function () { return jobStore.reapOrphans(); })
+    .then(function (n) { if (n) ctx.logger?.info?.(`[mv] ${n} 个任务标为中断，可续跑`); })
+    .catch(function () { /* 忽略 */ });
 
   async function meta() {
     const client = new ComfyClient();
