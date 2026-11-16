@@ -110,13 +110,17 @@ export function refsForShot(job, shot, max = 2) {
 }
 
 /** 喂给 Qwen 的话术：先认人，再演戏。两张定妆图时必须点名"这是两个角色"。 */
-export function refInstruction(refLabels, sceneText) {
+export function refInstruction(refLabels, sceneText, form = 'human') {
   const names = (Array.isArray(refLabels) ? refLabels : []).filter(Boolean).slice(0, 2);
   const head = names.length >= 2
     ? `画面里有 ${names.length} 个完全不同的角色，绝对不要融合成一个：参考图 1 是${names[0]}，参考图 2 是${names[1]}。`
     : `参考图是${names[0] || '角色'}的定妆照，整张图只有这一个角色，不要添加别的生物。`;
+  const guard = form === 'beast'
+    ? '这一镜出的是本体：狗必须是四足着地的狗，骨架必须是骷髅形态，都不要画成人形、不要穿人的衣服、不要长人的脸。'
+    : '这一镜出的是人形：不要画成狗，不要留兽耳或尾巴，不要露出骨架。';
   return [
     head,
+    guard,
     '长相、毛色、发型、服装、配饰（项圈、铜牌、骨纹）必须与参考图完全一致，不要换脸、不要换毛色、不要改配饰。',
     '只改变场景、机位、光线和动作。整体曝光正常，主体在画面里清楚可见，不要压得过暗。',
     sceneText,

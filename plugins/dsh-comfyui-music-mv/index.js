@@ -1,4 +1,4 @@
-/**
+﻿/**
  * dsh-comfyui-music-mv —— 音乐 MV 生成插件。
  *
  * 一条链：出歌（YuE2）→ 主角定妆图（Krea2）→ 每镜头 5–15s 视频（MiniMax H3）
@@ -24,7 +24,7 @@ import {
 } from './lib/mv.js';
 import { vocab, cameraSummary } from './lib/shotlang.js';
 import { probeFfmpeg, stitchWithTransitions, concatAudio } from './lib/ffmpeg.js';
-import { loadRefEditTemplate, buildRefEditGraph, refsForShot, refInstruction } from './lib/refedit.js';
+import { loadRefEditTemplate, buildRefEditGraph, refsForShot, refInstruction, shotForm } from './lib/refedit.js';
 import { cinematicPass } from './lib/grade.js';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -630,7 +630,7 @@ async function renderFrame(client, job, plan, shot, params) {
   if (pick.refs.length) {
     const graph = buildRefEditGraph(await refTemplate(), {
       refs: pick.refs,
-      prompt: refInstruction(pick.labels, sceneText),
+      prompt: refInstruction(pick.labels, sceneText, shotForm(shot)),
       aspectRatio: params.aspectRatio || '16:9 (Widescreen)',
       megapixels: Math.min(1.6, Number(params.frameMegapixels) || 1.3),
       steps: Math.max(12, Number(params.frameRefSteps) || 25),
