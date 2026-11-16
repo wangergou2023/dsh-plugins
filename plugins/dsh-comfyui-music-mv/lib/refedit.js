@@ -86,8 +86,9 @@ export function shotForm(shot) {
 }
 
 /**
- * 这一镜要用哪几张定妆图：按 cast 找人，再按形态选"本体图 / 人形图"。
+ * 这一镜要用哪几张定妆图：按 cast 找人，再按形态选"本体图 / 人形图 / 过渡图"。
  * 一张图只代表一个形态——喂错图，模型就会把狗画成人。
+ * 过渡形态（半骨半皮 / 半人半兽）是第三种图：变形镜只喂它，否则干净定妆图会把变形拽回去。
  */
 export function refsForShot(job, shot, max = 2) {
   const heroes = Array.isArray(job && job.heroes) ? job.heroes : [];
@@ -95,15 +96,18 @@ export function refsForShot(job, shot, max = 2) {
   const cast = Array.isArray(shot && shot.cast) ? shot.cast.map((x) => String(x).trim()).filter(Boolean) : [];
   const pool = cast.length ? heroes.filter((h) => cast.includes(String(h.label || '').trim())) : heroes;
   const form = shotForm(shot);
+  const wantTrans = String((shot && shot.form) || '') === 'trans';
   const refs = [];
   const labels = [];
   for (const h of pool) {
     const name = String(h.label || '').trim();
     const wantHuman = form === 'human';
-    const comfy = wantHuman ? (h.humanComfy || h.comfy) : (h.comfy || h.humanComfy);
+    const comfy = wantTrans
+      ? (h.transComfy || h.humanComfy || h.comfy)
+      : (wantHuman ? (h.humanComfy || h.comfy) : (h.comfy || h.humanComfy));
     if (!comfy) continue;
     refs.push(comfy);
-    labels.push(wantHuman ? `${name}的人形` : `${name}的本体`);
+    labels.push(wantTrans ? `${name}的过渡形态` : (wantHuman ? `${name}的人形` : `${name}的本体`));
     if (refs.length >= max) break;
   }
   return { refs, labels };
@@ -115,9 +119,11 @@ export function refInstruction(refLabels, sceneText, form = 'human') {
   const head = names.length >= 2
     ? `画面里有 ${names.length} 个完全不同的角色，绝对不要融合成一个：参考图 1 是${names[0]}，参考图 2 是${names[1]}。`
     : `参考图是${names[0] || '角色'}的定妆照，整张图只有这一个角色，不要添加别的生物。`;
-  const guard = form === 'beast'
-    ? '这一镜出的是本体：狗必须是四足着地的狗，骨架必须是骷髅形态，都不要画成人形、不要穿人的衣服、不要长人的脸。'
-    : '这一镜出的是人形：不要画成狗，不要留兽耳或尾巴，不要露出骨架。';
+  const guard = form === 'trans'
+    ? '这一镜拍的是"正在变"的那一瞬：身体一半是骨或兽，一半已经长成皮肉或人形，两种质地同时出现在同一个人身上，接缝处可见；不要画成完全的人，也不要画成完全的骨或狗。'
+    : (form === 'beast'
+      ? '这一镜出的是本体：狗必须是四足着地的狗，骨架必须是骷髅形态，都不要画成人形、不要穿人的衣服、不要长人的脸。'
+      : '这一镜出的是人形：不要画成狗，不要留兽耳或尾巴，不要露出骨架。');
   return [
     head,
     guard,

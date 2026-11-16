@@ -1,4 +1,4 @@
-﻿/**
+/**
  * dsh-comfyui-music-mv —— 音乐 MV 生成插件。
  *
  * 一条链：出歌（YuE2）→ 主角定妆图（Krea2）→ 每镜头 5–15s 视频（MiniMax H3）
@@ -762,7 +762,7 @@ async function renderFrame(client, job, plan, shot, params) {
   if (pick.refs.length) {
     const graph = buildRefEditGraph(await refTemplate(), {
       refs: pick.refs,
-      prompt: refInstruction(pick.labels, sceneText, shotForm(shot)),
+      prompt: refInstruction(pick.labels, sceneText, shot.form === 'trans' ? 'trans' : shotForm(shot)),
       aspectRatio: params.aspectRatio || '16:9 (Widescreen)',
       megapixels: Math.min(1.6, Number(params.frameMegapixels) || 1.3),
       steps: Math.max(12, Number(params.frameRefSteps) || 25),
