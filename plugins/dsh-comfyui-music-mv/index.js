@@ -23,7 +23,7 @@ import {
   charactersOf, castOf, lintPlan, segmentLyrics, composeFramePrompt, splitLook, extendSilentBeat, breakLyricDup, heroFormSpecs, trimLongActions, mergeScenes, cleanLogline,
 } from './lib/mv.js';
 import { vocab, cameraSummary } from './lib/shotlang.js';
-import { probeFfmpeg, stitchWithTransitions, concatAudio } from './lib/ffmpeg.js';
+import { probeFfmpeg, stitchWithTransitions, concatAudio, composeTransHero } from './lib/ffmpeg.js';
 import { loadRefEditTemplate, buildRefEditGraph, refsForShot, refInstruction, shotForm } from './lib/refedit.js';
 import { cinematicPass } from './lib/grade.js';
 import { buildBookHtml } from './lib/book.js';
@@ -344,6 +344,7 @@ function planSystemPrompt(shotCount, duration) {
     '5. action 只写画面：人物动作、表情、与环境的关系。绝对不能写歌词、字幕、文字、水印。',
     '6. dialogue 必须填：从你写的 lyrics 里原样摘一句当这一镜对口型唱的词。但全片必须且只能有一镜留空（见规则 19）。',
     '7. characters 必须有 1–3 个角色，每个都要写清外形；cast 只填这一镜真正出镜的人，别漏也别多。',
+    '7b. look 只写人形（年龄、发型、五官、服装）；如果这个角色的本体不是人（犬、兽、骨架、器物），必须把本体写进 beast 字段，一句话说清它长什么样。look 里绝不能出现本体形态——写进去会把人形和本体揉成一张图。',
     '8. 主角始终是同一个人（脸、发型、服装不变），可以换环境、换景别、换机位；多角色同框时各自外形不能混。',
     '9. 不要出现「四视图」「多视角」「分屏」「拼图」这类排版词。',
     '10. look 只写视觉（胶片、调色、镜头、光线），不要出现乐器、BPM、唱腔这类音乐词——那些归 style。',
@@ -888,7 +889,27 @@ async function refTemplate() {
  * 以前把「犬…幻化人形时是少年…」整句喂进去，模型会揉成「长着狗耳朵的少年」。
  */
 async function renderHero(client, job, plan, character, index, params) {
-  const specs = heroFormSpecs(character.look).slice(0, 2);
+  // look 只写人形、beast 写本体；没有 beast 时才回落到从 look 里切（老 plan 兼容）。
+  const beastText = String(character.beast || '').trim();
+  const specs = (beastText
+    ? [
+      {
+        form: 'beast',
+        text: beastText,
+        guard: '角色定妆照，只有这一个非人形态：动物或骨架本体，完整身形，画面里没有任何人类、没有人的脸、没有手臂、没有衣领、没有兽耳少年',
+      },
+      {
+        form: 'human',
+        text: character.look || beastText,
+        guard: '角色定妆照，只有这一个人形：正常人类的头部与头发，画面里没有兽耳、没有尾巴、没有动物毛发、没有裸露的骨架；如果角色是骨架成人，骨相只能出现在露出的皮肤质感上，绝不能做成衣服上的骨头印花',
+      },
+      {
+        form: 'trans',
+        text: `画面从正中线竖着分开，同一具身体的两半：左半边是${beastText}，右半边是长着皮肤、头发的人形（${character.look || ''}）；两半在同一具身体上接着，接缝沿胸骨与鼻梁走，能看到骨茬和皮肉的过渡`,
+        guard: '角色定妆照，半骨半人（或半兽半人）的过渡形态，画面从正中线分开：左半边解剖结构外露，右半边完整皮肤与头发，接缝清晰；不是两个人物，是同一具身体的两半；画面里没有印花服装',
+      },
+    ]
+    : heroFormSpecs(character.look)).filter((s) => s.form !== 'trans').slice(0, 2);
   const entry = { label: character.name, look: character.look };
   for (const spec of specs) {
     const heroPrompt = [
@@ -913,12 +934,17 @@ async function renderHero(client, job, plan, character, index, params) {
     await fs.mkdir(path.join(DATA_DIR, job.id), { recursive: true });
     const stamp = Date.now().toString(36);
     const isHuman = spec.form === 'human';
-    const heroFile = path.join(DATA_DIR, job.id, `hero_${index + 1}${isHuman ? '_human' : ''}_${stamp}.png`);
+    const isTrans = spec.form === 'trans';
+    const suffix = isHuman ? '_human' : isTrans ? '_trans' : '';
+    const heroFile = path.join(DATA_DIR, job.id, `hero_${index + 1}${suffix}_${stamp}.png`);
     await fs.writeFile(heroFile, buffer);
-    const comfy = await client.upload(buffer, `mv_hero${isHuman ? '_h' : ''}_${job.id}_${index + 1}_${stamp}.png`, 'image/png');
+    const comfy = await client.upload(buffer, `mv_hero${isHuman ? '_h' : isTrans ? '_trans' : ''}_${job.id}_${index + 1}_${stamp}.png`, 'image/png');
     if (isHuman) {
       entry.humanFile = heroFile;
       entry.humanComfy = comfy;
+    } else if (isTrans) {
+      entry.transFile = heroFile;
+      entry.transComfy = comfy;
     } else {
       entry.file = heroFile;
       entry.comfy = comfy;
@@ -926,6 +952,26 @@ async function renderHero(client, job, plan, character, index, params) {
     if (!entry.file) {
       entry.file = heroFile;
       entry.comfy = comfy;
+    }
+  }
+  // 过渡形态不走生成：两次实测模型都把"另一半"画成第二个人。
+  // 改成拿本体与人形两张定妆沿一条带抖动的竖线拼起来，结果是确定的。
+  if (entry.file && entry.humanFile && !entry.transFile) {
+    try {
+      const stamp = Date.now().toString(36);
+      const transFile = path.join(DATA_DIR, job.id, `hero_${index + 1}_trans_${stamp}.png`);
+      await composeTransHero({
+        pluginDir: __dirname,
+        beastFile: entry.file,
+        humanFile: entry.humanFile,
+        outFile: transFile,
+      });
+      const buf = await fs.readFile(transFile);
+      const transComfy = await client.upload(buf, `mv_hero_trans_${job.id}_${index + 1}_${stamp}.png`, 'image/png');
+      entry.transFile = transFile;
+      entry.transComfy = transComfy;
+    } catch (error) {
+      // 没有 ffmpeg 就跳过过渡形态，不影响定妆与静帧
     }
   }
   return entry;

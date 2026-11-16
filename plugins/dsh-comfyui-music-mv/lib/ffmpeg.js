@@ -161,3 +161,21 @@ export async function stitchWithTransitions({ pluginDir, clips, transitions, aud
   if (!stat || stat.size === 0) throw new Error('ffmpeg 没有产出文件：' + stderr.slice(-400));
   return { file: outFile, bytes: stat.size, bin };
 }
+
+/**
+ * 过渡形态定妆：把"本体"和"人形"两张定妆沿一条带抖动的竖线拼成一张。
+ * 为什么不在生成时让模型画"一半骨一半皮"——实测两次，模型都理解成"两个人并排"。
+ * 拼接是确定性的：出来的永远是同一具身体的两半。
+ */
+export async function composeTransHero({ pluginDir, beastFile, humanFile, outFile }) {
+  const bin = findFfmpeg(pluginDir);
+  if (!bin) throw new Error('ffmpeg_not_found');
+  const expr = "if(lt(X,W/2+10*sin(Y/38)),A,B)";
+  await run(bin, [
+    '-y', '-i', beastFile, '-i', humanFile,
+    '-filter_complex',
+    `[0:v]scale=1024:1024,format=rgb24[a];[1:v]scale=1024:1024,format=rgb24[b];[a][b]blend=all_expr='${expr}'[out]`,
+    '-map', '[out]', '-frames:v', '1', '-q:v', '2', outFile,
+  ], 60000);
+  return outFile;
+}

@@ -403,18 +403,29 @@ export function heroFormSpecs(look) {
   const raw = String(look || '').trim();
   if (!raw) return [{ form: 'human', text: '一位年轻人', guard: '单人半身肖像，正面看镜头，五官清晰' }];
   const split = splitLook(raw);
-  const hadSplit = Boolean(split.beast);
+  // 分隔词没命中，但句子同时提到"兽/骨"和"人"——这时必须强行拆开。
+  // 不拆的后果实测过：模型会把骨头画成裙子上的印花、把狗画成"带狗耳朵的少年"，
+  // 因为一整句里两套形态互相拉扯，它只能挑最省事的画法。
+  const mixedHint = BEAST_WORD.test(raw) && HUMAN_WORD.test(raw);
+  const hadSplit = Boolean(split.beast) || mixedHint;
   if (hadSplit) {
+    const beastText = split.beast || `${raw}（只取其中的本体形态：动物或骨架，不要任何人的特征）`;
+    const humanText = split.beast ? (split.human || raw) : `${raw}（只取其中的人形：一个正常的人，骨架与动物特征一律不画）`;
     return [
       {
         form: 'beast',
-        text: split.beast,
+        text: beastText,
         guard: '角色定妆照，只有这一个非人形态：动物或骨架本体，完整身形，画面里没有任何人类、没有人的脸、没有手臂、没有衣领、没有兽耳少年',
       },
       {
         form: 'human',
-        text: split.human || raw,
-        guard: '角色定妆照，只有这一个人形：正常人类的头部与头发，画面里没有兽耳、没有尾巴、没有动物毛发、没有裸露的骨架',
+        text: humanText,
+        guard: '角色定妆照，只有这一个人形：正常人类的头部与头发，画面里没有兽耳、没有尾巴、没有动物毛发、没有裸露的骨架；如果角色是骨架成人，骨相只能出现在露出的皮肤质感上，绝不能做成衣服上的骨头印花',
+      },
+      {
+        form: 'trans',
+        text: `画面从正中线竖着分开，同一具身体的两半：左半边是${beastText}，右半边是长着皮肤头发的人形；两半在同一具身体上接着，接缝沿胸骨与鼻梁走，能看到骨茬和皮肉的过渡`,
+        guard: '角色定妆照，半骨半人（或半兽半人）的过渡形态，画面从正中线分开：左半边解剖结构外露，右半边完整皮肤与头发，接缝清晰；不是两个人物，是同一具身体的两半；画面里没有第二个人、没有印花服装',
       },
     ];
   }
