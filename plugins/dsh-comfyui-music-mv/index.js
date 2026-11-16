@@ -21,6 +21,7 @@ import {
   buildSliceAudioPrompt, buildStitchPrompt, fetchVideo, fetchComfyImage, fetchComfyAudio,
   firstOutputImage, saveVideo, saveFrame, normalizePlan, parsePlanJson, suggestShotCount,
   charactersOf, castOf, lintPlan, segmentLyrics, composeFramePrompt, splitLook, extendSilentBeat, breakLyricDup, heroFormSpecs, trimLongActions, mergeScenes, cleanLogline, expandDialogueBeats,
+  enforceReversePair,
 } from './lib/mv.js';
 import { vocab, cameraSummary } from './lib/shotlang.js';
 import { probeFfmpeg, stitchWithTransitions, concatAudio, composeTransHero } from './lib/ffmpeg.js';
@@ -573,7 +574,7 @@ async function generatePlan(ctx, params) {
   if (shotCount <= 10) {
     const { text: raw, model } = await llmText(ctx, planSystemPrompt(shotCount, duration), userLines.join('\n'), { maxTokens: 6000 });
     const data = parsePlanJson(raw);
-    const plan = cleanLogline(mergeScenes(trimLongActions(await focusSignShot(ctx, await repairBookend(ctx, await addWarmBeat(ctx, relieveSilence(breakLyricDup(extendSilentBeat(normalizePlan(data, { duration, shotCount }))))))))));
+    const plan = cleanLogline(mergeScenes(trimLongActions(enforceReversePair(await focusSignShot(ctx, await repairBookend(ctx, await addWarmBeat(ctx, relieveSilence(breakLyricDup(extendSilentBeat(normalizePlan(data, { duration, shotCount })))))))))));
     return { plan, model, raw, lint: lintPlan(plan) };
   }
 
@@ -607,7 +608,7 @@ async function generatePlan(ctx, params) {
     if (Array.isArray(part && part.shots)) shots.push(...part.shots);
   }
   if (!shots.length) throw new Error('分镜生成失败：模型返回里没有 shots');
-  const plan = cleanLogline(mergeScenes(trimLongActions(await focusSignShot(ctx, await repairBookend(ctx, await addWarmBeat(ctx, relieveSilence(breakLyricDup(extendSilentBeat(normalizePlan({ ...head, shots }, { duration, shotCount }))))))))));
+  const plan = cleanLogline(mergeScenes(trimLongActions(enforceReversePair(await focusSignShot(ctx, await repairBookend(ctx, await addWarmBeat(ctx, relieveSilence(breakLyricDup(extendSilentBeat(normalizePlan({ ...head, shots }, { duration, shotCount })))))))))));
   return { plan, model, raw: rawHead, lint: lintPlan(plan) };
 }
 

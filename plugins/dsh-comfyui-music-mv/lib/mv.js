@@ -123,6 +123,52 @@ export function allocateTimeline(duration, count) {
  *
  * 拆的时候焦点必须交替（cast 首元素互换），否则拆出来的全是同一个人的重复镜。
  */
+// 正反打兜底：模型常给两个"同方向"的过肩镜（焦点永远在第一个人身上），
+// 那不是正反打，是同一个镜头拍两遍。这里把第二镜的焦点换到对手身上，
+// 并让两镜共用同一处空间——观众才看得出"他们在互看"。
+export function enforceReversePair(plan) {
+  const shots = (plan.shots || []).slice();
+  const ots = [];
+  for (let i = 0; i < shots.length; i += 1) {
+    const s = shots[i];
+    if (String(s.composition || '') === 'ots' && Array.isArray(s.cast) && s.cast.length >= 2) ots.push(i);
+  }
+  if (ots.length < 2) return plan;
+
+  const pairUp = (a, b) => {
+    const A = shots[a];
+    const B = shots[b];
+    const swapped = [B.cast[1], ...B.cast.slice(2), B.cast[0]];
+    shots[b] = { ...B, cast: swapped, scene: A.scene || B.scene };
+  };
+
+  // 优先找"同一时刻"的一对：同 time 且 cast 顺序相同
+  for (let i = 0; i < ots.length; i += 1) {
+    for (let j = i + 1; j < ots.length; j += 1) {
+      const A = shots[ots[i]];
+      const B = shots[ots[j]];
+      const sameCastOrder = (A.cast || []).join('|') === (B.cast || []).join('|');
+      const sameTime = String(A.time || '') === String(B.time || '');
+      if (sameCastOrder && sameTime) {
+        pairUp(ots[i], ots[j]);
+        return { ...plan, shots };
+      }
+    }
+  }
+  // 退一步：只要 cast 顺序一样就换
+  for (let i = 0; i < ots.length; i += 1) {
+    for (let j = i + 1; j < ots.length; j += 1) {
+      const A = shots[ots[i]];
+      const B = shots[ots[j]];
+      if ((A.cast || []).join('|') === (B.cast || []).join('|')) {
+        pairUp(ots[i], ots[j]);
+        return { ...plan, shots };
+      }
+    }
+  }
+  return plan;
+}
+
 export function expandDialogueBeats(rawShots, opts = {}) {
   const minSeconds = Number(opts.minSeconds) || 7;
   const maxParts = Number(opts.maxParts) || 3;
@@ -1295,6 +1341,20 @@ export function lintPlan(plan) {
   // 2. 表演不重复：任意两镜不能共用同一个开头
   const heads = shots.map((s) => String(s.performance || '').replace(/[，,。；;、\s]/g, '').slice(0, 8));
   const dup = heads.filter((h, i) => h.length >= 4 && heads.indexOf(h) !== i);
+  // 表演必须是"看得见的身体动作"，不能是情绪形容词——影帝和素人的差别全在这里。
+  const BODY = /手|指|腕|手臂|肘|肩|颈|喉|下巴|脸|眼|眼皮|眉|鼻|唇|嘴|牙|舌|呼吸|胸|背|腰|膝|脚|脚趾|脚跟|头发|汗|肌肉|骨节/;
+  const EMOTION_ONLY = /^(悲伤|难过|痛苦|绝望|委屈|愤怒|紧张|激动|思念|孤独|失落|开心|幸福|不舍|惶恐)/;
+  const weakBody = shots.filter((s) => {
+    const perf = String(s.performance || s.action || '');
+    if (!perf.trim()) return false;
+    return !BODY.test(perf) || EMOTION_ONLY.test(perf.trim());
+  });
+  const bodyOk = shots.length - weakBody.length;
+  push('body', '表演落在身体上（不是情绪形容词）', weakBody.length <= Math.floor(shots.length * 0.1),
+    weakBody.length
+      ? `${weakBody.length} 镜的表演没有身体动作（${weakBody.slice(0, 3).map((s) => (s.label || s.index + 1)).join('、')}）`
+      : `${bodyOk}/${shots.length} 镜都有具体的手/眼/呼吸动作`);
+
   push('perf-dup', '表演不重复', dup.length === 0,
     dup.length ? `${dup.length} 镜的表演开头重复（${dup.slice(0, 3).join('、')}）` : '每镜微动作都不同');
 
