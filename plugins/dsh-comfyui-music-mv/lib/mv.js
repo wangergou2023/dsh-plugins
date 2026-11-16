@@ -218,6 +218,8 @@ export function normalizePlan(data, opts = {}) {
         }))
         .filter((c) => c.name || c.look)
       : [],
+    // 视觉基调：只喂画面（胶片感、调色、镜头），和曲风分开
+    look: String((data && (data.look || data.visualStyle)) || '').trim(),
     negative: String((data && data.negative) || '').trim(),
     story: {
       logline: picks('logline', 'oneLine', 'premise'),
@@ -272,7 +274,8 @@ export function composeFramePrompt(plan, shot) {
   if (shot.action) parts.push(shot.action);
   parts.push(cameraFragment(shot));
   if (shot.beat) parts.push(`情绪：${shot.beat}`);
-  if (plan.style) parts.push(plan.style);
+  // 只喂视觉基调；曲风是给 YuE2 的，塞进画面提示词只会把画面带偏
+  if (plan.look) parts.push(plan.look);
   parts.push('电影剧照，人物与场景细节清晰，不要文字、不要水印');
   return parts.filter(Boolean).join('。');
 }

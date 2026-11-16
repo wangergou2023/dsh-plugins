@@ -64,6 +64,7 @@ window.__ModuleLoader__.load({
       style: '',
       tailLink: true,
       lipSync: true,
+      grade: true,
     };
 
     const small = { fontSize: '12px' };
@@ -181,6 +182,8 @@ window.__ModuleLoader__.load({
             megapixels: cfg.megapixels,
             tailLink: cfg.tailLink,
             lipSync: cfg.lipSync,
+            grade: cfg.grade,
+            crop: cfg.grade,
             phase,
           });
           setJob({ id: data.job.id, status: 'queued', plan, shots: [] });
@@ -479,7 +482,14 @@ window.__ModuleLoader__.load({
                 setCharacters(planCharacters().concat([{ name: '', look: '' }]));
               },
             }, '+ 添加角色'),
-            h('div', { style: { ...muted, marginTop: '6px' } }, '曲风 / 歌词（喂给 YuE2）'),
+            h('div', { style: { ...muted, marginTop: '6px' } }, '视觉基调（只喂画面：胶片感、调色、镜头、光线）'),
+            h('textarea', {
+              value: plan.look || '', rows: 2,
+              placeholder: '例如：35mm 胶片颗粒，低饱和青橙调色，浅景深，逆光边缘光',
+              onChange: function (e) { patchPlan({ look: e.target.value }); },
+              style: { width: '100%', resize: 'vertical', fontFamily: 'inherit', fontSize: '12px', marginBottom: '4px' },
+            }),
+            h('div', { style: { ...muted, marginTop: '6px' } }, '曲风（喂给 YuE2）'),
             h('textarea', {
               value: plan.style || '', rows: 1,
               onChange: function (e) { patchPlan({ style: e.target.value }); },
@@ -503,6 +513,10 @@ window.__ModuleLoader__.load({
               h('label', { title: '有歌词的镜头会把歌切一段喂给模型，让它按这段歌声对口型', style: { display: 'flex', alignItems: 'center', gap: '5px', ...small } },
                 h('input', { type: 'checkbox', checked: cfg.lipSync, onChange: function (e) { setCfg(function (p) { return { ...p, lipSync: e.target.checked }; }); } }),
                 '对口型'
+              ),
+              h('label', { title: '合成后再过一遍：2.35:1 遮幅 + 调色 + 暗角 + 胶片颗粒 + 片名（需要 ffmpeg）', style: { display: 'flex', alignItems: 'center', gap: '5px', ...small } },
+                h('input', { type: 'checkbox', checked: cfg.grade, onChange: function (e) { setCfg(function (p) { return { ...p, grade: e.target.checked }; }); } }),
+                '电影质感'
               )
             )
           )

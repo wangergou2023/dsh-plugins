@@ -24,6 +24,7 @@ import {
 } from './lib/mv.js';
 import { vocab, cameraSummary } from './lib/shotlang.js';
 import { probeFfmpeg, stitchWithTransitions } from './lib/ffmpeg.js';
+import { cinematicPass } from './lib/grade.js';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const DATA_DIR = process.env.DSH_MUSIC_MV_DATA || path.join(HERE, '.data');
@@ -279,6 +280,7 @@ function planSystemPrompt(shotCount, duration) {
     '  "ending": "结尾画面：最后一个镜头怎么收",',
     '  "notes": "导演阐述一两句：视觉基调、调色、为什么这么拍",',
     '  "style": "曲风（英文更稳）：流派、乐器、人声、情绪、速度",',
+    '  "look": "视觉基调一句话，只写画面：胶片感/数字感、调色、镜头类型、光线基调",',
     '  "characters": [{ "name": "角色名（短，2-4 字）", "look": "外形一句话：年龄性别、发型发色、五官特征、服装/铠甲/配饰" }],',
     '  "lyrics": "完整歌词，用 [Verse] [Chorus] [Bridge] 标记段落，每句一行",',
     '  "shots": [{',
@@ -310,7 +312,8 @@ function planSystemPrompt(shotCount, duration) {
     '7. characters 必须有 1–3 个角色，每个都要写清外形；cast 只填这一镜真正出镜的人，别漏也别多。',
     '8. 主角始终是同一个人（脸、发型、服装不变），可以换环境、换景别、换机位；多角色同框时各自外形不能混。',
     '9. 不要出现「四视图」「多视角」「分屏」「拼图」这类排版词。',
-    '10. 歌词要能唱：副歌重复、句子短、押韵。',
+    '10. look 只写视觉（胶片、调色、镜头、光线），不要出现乐器、BPM、唱腔这类音乐词——那些归 style。',
+    '11. 歌词要能唱：副歌重复、句子短、押韵。',
   ].join('\n');
 }
 
@@ -440,7 +443,7 @@ async function sliceShotAudio(client, job, songName, shot) {
  * 出成品：能真转场就真转场（ffmpeg xfade），否则回退到 ComfyUI 硬切拼接。
  * 两种路都保证音轨是整首歌、时长按歌长裁齐。
  */
-async function buildFinal(client, job) {
+async function buildFinal(client, job, options = {}) {
   const ordered = (job.shots || []).filter((s) => s.comfyVideo && s.video);
   if (ordered.length === 0) throw new Error('没有可拼接的镜头视频');
   const cuts = ordered.slice(0, -1).map((s) => s.transition || 'cut');
@@ -448,6 +451,7 @@ async function buildFinal(client, job) {
   const wantXfade = cuts.some((t) => t && t !== 'cut');
   const ff = wantXfade ? await probeFfmpeg(HERE) : { ok: false };
 
+  let result;
   if (ff.ok) {
     const outFile = path.join(DATA_DIR, 'mv', job.id + '.mp4');
     const res = await stitchWithTransitions({
@@ -458,20 +462,43 @@ async function buildFinal(client, job) {
       totalSeconds: songDur,
       outFile,
     });
-    return { buffer: await fs.readFile(res.file), file: res.file, mode: 'ffmpeg · 真转场 xfade' };
+    result = { buffer: await fs.readFile(res.file), file: res.file, mode: 'ffmpeg · 真转场 xfade' };
+  } else {
+    const graph = buildStitchPrompt({
+      clips: ordered.map((s) => s.comfyVideo),
+      audio: job.song && job.song.name,
+      filenamePrefix: 'video/MV_' + job.id,
+      trimSeconds: songDur,
+    });
+    const promptId = await client.submit(graph);
+    const entry = await client.wait(promptId, 1800000);
+    const { buffer } = await fetchVideo(client, entry, { nodeId: '2002' });
+    const file = await saveVideo(DATA_DIR, job.id + '.mp4', buffer);
+    result = { buffer, file, mode: 'ComfyUI · 硬切拼接' };
   }
 
-  const graph = buildStitchPrompt({
-    clips: ordered.map((s) => s.comfyVideo),
-    audio: job.song && job.song.name,
-    filenamePrefix: 'video/MV_' + job.id,
-    trimSeconds: songDur,
-  });
-  const promptId = await client.submit(graph);
-  const entry = await client.wait(promptId, 1800000);
-  const { buffer } = await fetchVideo(client, entry, { nodeId: '2002' });
-  const file = await saveVideo(DATA_DIR, job.id + '.mp4', buffer);
-  return { buffer, file, mode: 'ComfyUI · 硬切拼接' };
+  // 电影质感后处理（调色 / 暗角 / 颗粒 / 遮幅 / 片名）——失败不影响交付
+  const grading = options.grade !== false;
+  const ff2 = grading ? await probeFfmpeg(HERE) : { ok: false };
+  if (ff2.ok) {
+    try {
+      const gradedFile = path.join(DATA_DIR, 'mv', job.id + '_graded.mp4');
+      const g = await cinematicPass({
+        pluginDir: HERE,
+        input: result.file,
+        output: gradedFile,
+        title: (job.plan && job.plan.title) || '',
+        subtitle: 'AI Music Video',
+        crop: options.crop !== false,
+        grade: true,
+        grain: true,
+      });
+      result = { buffer: await fs.readFile(g.file), file: g.file, mode: result.mode + ' + 电影质感' };
+    } catch (error) {
+      result.mode += '（质感后处理失败，已交付原片）';
+    }
+  }
+  return result;
 }
 
 async function execute(job, params) {
@@ -721,7 +748,7 @@ async function execute(job, params) {
 
   /* 7. 拼接 + 压曲 */
   await jobPatch(job.id, { stage: 'stitch', stageLabel: '拼接并压上原曲' });
-  const final = await buildFinal(client, job);
+  const final = await buildFinal(client, job, { grade: params.grade, crop: params.crop });
 
   await jobPatch(job.id, {
     status: 'done',
@@ -1221,7 +1248,7 @@ export function apply(ctx) {
         if (!(job.shots || []).some((s) => s.comfyVideo && s.video)) { sendJson(response, 400, { error: 'no_clips' }); return; }
         try {
           const client = new ComfyClient();
-          const out = await buildFinal(client, job);
+          const out = await buildFinal(client, job, { grade: (body && body.grade) !== false, crop: (body && body.crop) !== false });
           await jobStore.patch(id, {
             status: 'done', stage: 'done', stageLabel: '完成',
             file: out.file, bytes: out.buffer.length, stitchMode: out.mode,
