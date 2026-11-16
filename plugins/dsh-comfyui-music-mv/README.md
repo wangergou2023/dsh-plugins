@@ -121,9 +121,13 @@ LoadImage(本体/人形 定妆) ×1–2 → TextEncodeQwenImage21 → KSampler �
 | 工具 | 作用 |
 |---|---|
 | `mv_plan` | 主题 → 剧本 + 歌词 + 分镜表（只调宿主 LLM，不占 GPU） |
+| `mv_script` | 主题 → 剧本 + 体检 + **导演本 html**，一步拿到可评审的本子（不占 GPU，约 25 秒） |
+| `mv_book` | 把已有任务导成导演本 html（带静帧） |
 | `mv_render` | 后台任务；`phase=all/frames/videos`、`tailLink` 控制是否接龙 |
 | `mv_status` | 查进度：阶段、每镜静帧/视频状态、成品路径 |
 | `mv_stitch` | 只拼接：N 段视频 + 1 条音轨 → mp4（`trimSeconds` 裁到歌长） |
+
+推荐节奏：**先用 `mv_script` 出本子（25 秒、零 GPU）→ 改剧本 → 满意了再 `mv_render`**。剧本阶段便宜，渲染阶段一小时起，别反过来。
 
 ## 对口型
 

@@ -1546,6 +1546,50 @@ export function apply(ctx) {
     },
   });
 
+  ctx.tools.register({
+    name: 'mv_script',
+    description: '只出剧本 + 导演本，不占 GPU：主题 → 剧本/歌词/分镜 → 体检 → 单文件 HTML（静帧位置留白）。先看本子决定要不要花一小时渲染。',
+    parameters: {
+      type: 'object',
+      properties: {
+        theme: { type: 'string', description: '一句话主题' },
+        duration: { type: 'number', description: '时长秒数，默认 60；>120 秒会自动分段出歌' },
+        shotCount: { type: 'number', description: '镜头数；不填按每镜约 10 秒算' },
+        style: { type: 'string', description: '指定曲风（可选）' },
+        lyrics: { type: 'string', description: '自带歌词（可选），只补段落标记' },
+        outFile: { type: 'string', description: '输出 html 路径；不填写到 .data/script-<时间>.html' },
+      },
+      required: ['theme'],
+    },
+    output: OUTPUT,
+    timeoutMs: 300000,
+    async execute(args) {
+      const started = Date.now();
+      const { plan, lint } = await generatePlan(ctx, {
+        theme: args.theme,
+        duration: args.duration,
+        shotCount: args.shotCount,
+        style: args.style,
+        lyrics: args.lyrics,
+      });
+      const id = 'script_' + Date.now().toString(36);
+      const job = { id, plan, shots: plan.shots, heroes: [], song: null, params: {} };
+      const html = buildBookHtml(job, { pluginDir: PLUGIN_DIR });
+      const outFile = args.outFile
+        ? path.resolve(String(args.outFile))
+        : path.join(DATA_DIR, `${id}.html`);
+      await fs.mkdir(path.dirname(outFile), { recursive: true });
+      await fs.writeFile(outFile, html, 'utf8');
+      const fails = (lint.checks || []).filter((c) => c.ok === false);
+      return text([
+        `《${plan.title}》${(plan.shots || []).length} 镜 · ${(plan.scenes || []).length} 场 · ${Math.round((Date.now() - started) / 1000)} 秒`,
+        `体检：${lint.score} 分（${lint.passed}/${lint.total}）${fails.length ? '｜没过：' + fails.map((c) => c.label || c.id).join('、') : ''}`,
+        `本子：${outFile}（${(html.length / 1024 / 1024).toFixed(2)} MB）`,
+        `素材：${(plan.props || []).map((p) => p.name).join('、') || '无'}　｜　下一步可以 mv_book / mv_render`,
+      ]);
+    },
+  });
+
   ctx.inject(['webServer'], (webCtx) => {
     const webServer = webCtx.get('webServer');
     if (webServer === undefined) return;
