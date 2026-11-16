@@ -1,4 +1,4 @@
-﻿/**
+/**
  * dsh-comfyui-music-mv —— 音乐 MV 生成插件。
  *
  * 一条链：出歌（YuE2）→ 主角定妆图（Krea2）→ 每镜头 5–15s 视频（MiniMax H3）
@@ -591,6 +591,101 @@ async function generatePlan(ctx, params) {
   if (!shots.length) throw new Error('分镜生成失败：模型返回里没有 shots');
   const plan = await repairBookend(ctx, relieveSilence(extendSilentBeat(normalizePlan({ ...head, shots }, { duration, shotCount }))));
   return { plan, model, raw: rawHead, lint: lintPlan(plan) };
+}
+
+/* ---------------------------- 分镜体检（人眼标准） ---------------------------- */
+
+const REVIEW_SYSTEM = `你是一位严格的分镜指导，只审"这一格能不能让人一眼看懂"，不夸不客气。
+
+对每一镜打 4 项分（都是 1–5，允许打 2 分）：
+- who：画面里主体是否唯一清楚（没有两个同等重量的动作/人物抢戏）
+- want：objective（他想要什么）能不能直接拍成看得见的动作
+- block：有没有障碍或阻力（没有阻力的镜头是废镜头）
+- acting：表演是否具体到"肌肉/呼吸/手指"，且不是摆拍看镜头
+
+再给一句 note（这一格一眼看到什么）和一句 fix（怎么改，具体到可执行，禁止"更有情绪"这种废话）。
+
+判分尺度：5 = 一眼读懂且有回味；4 = 清楚但平；3 = 要读第二遍；2 = 读不懂；1 = 废。
+整体 overall 用一句话说这部片现在最致命的 3 个问题。
+
+只输出 JSON：
+{"shots":[{"i":1,"who":4,"want":4,"block":3,"acting":4,"note":"…","fix":"…"}],"overall":"…"}`;
+
+async function reviewPlan(ctx, plan) {
+  const brief = (plan.shots || []).map((s) => ({
+    i: s.index + 1,
+    label: s.label,
+    size: s.size,
+    move: s.move,
+    action: s.action,
+    performance: s.performance,
+    objective: s.objective,
+    prop: s.prop,
+    dialogue: s.dialogue || '（不说话）',
+    seconds: Number(s.seconds.toFixed(1)),
+    cast: s.cast,
+  }));
+  const user = [
+    `片名：《${plan.title}》`,
+    `一句话：${plan.story && plan.story.logline}`,
+    `物件母题：${(plan.props || []).map((p) => p.name).join('、')}`,
+    `分镜（${brief.length} 镜）：`,
+    JSON.stringify(brief, null, 1),
+  ].join('\n');
+  const { text: raw, model } = await llmText(ctx, REVIEW_SYSTEM, user, { maxTokens: 6000 });
+  const data = parsePlanJson(raw);
+  const shots = (data && Array.isArray(data.shots) ? data.shots : []).map((s) => {
+    const num = (v) => Math.max(1, Math.min(5, Number(v) || 3));
+    const who = num(s.who); const want = num(s.want); const block = num(s.block); const acting = num(s.acting);
+    return { i: Number(s.i) || 0, who, want, block, acting, total: who + want + block + acting, note: String(s.note || '').trim(), fix: String(s.fix || '').trim() };
+  }).filter((s) => s.i > 0).sort((a, b) => a.i - b.i);
+  const overall = String((data && data.overall) || '').trim();
+  const weak = shots.filter((s) => s.total <= 14).map((s) => s.i);
+  const avg = shots.length ? shots.reduce((a, s) => a + s.total, 0) / shots.length : 0;
+  return { model, overall, shots, weak, avg: Number(avg.toFixed(2)) };
+}
+
+/* ---------------------------- 弱镜返修 ---------------------------- */
+
+const REWRITE_SYSTEM = `你是分镜医生。给你几镜"一眼读不懂"的分镜和审片意见，你只改它们的 action / performance / objective 三个字段，其余一律不动。
+
+改写规则（违反一条就算失败）：
+1. action 只写看得见的物理事件，12–90 字，必须包含一个"卡住"的瞬间（够不到、被挡住、松手、被风吹走、来不及）。
+2. performance 写成"先做→停在哪→最后做"的三段式，必须落到身体细节（指节、喉结、呼吸、脚趾、睫毛），禁止情绪形容词。
+3. objective 是这一镜里角色想拿到的一个具体东西，用动词开头，同一场戏里不能和相邻镜头重复。
+4. 视线必须落在具体物件或对方身上，不能看镜头。
+5. 保留原有的物件（prop）与唱词，不许改剧情走向。
+
+只输出 JSON：{"shots":[{"i":1,"action":"…","performance":"…","objective":"…"}]}`;
+
+async function rewriteShots(ctx, plan, items) {
+  if (!items.length) return plan;
+  const ctxShots = (plan.shots || []).map((s) => ({
+    i: s.index + 1, label: s.label, size: s.size, move: s.move, action: s.action,
+    performance: s.performance, objective: s.objective, prop: s.prop,
+    dialogue: s.dialogue || '（不说话）', cast: s.cast, seconds: Number(s.seconds.toFixed(1)),
+  }));
+  const weak = items.map((s) => ({ i: s.i, note: s.note, fix: s.fix, total: s.total }));
+  const user = [
+    `片名：《${plan.title}》　一句话：${plan.story && plan.story.logline}`,
+    '全部镜头（保持前后连贯，不要重复相邻镜头的动作与目的）：',
+    JSON.stringify(ctxShots, null, 1),
+    '需要改的镜头：',
+    JSON.stringify(weak, null, 1),
+  ].join('\n');
+  const { text: raw } = await llmText(ctx, REWRITE_SYSTEM, user, { maxTokens: 4000 });
+  const data = parsePlanJson(raw);
+  const fixes = new Map((data && Array.isArray(data.shots) ? data.shots : []).map((s) => [Number(s.i), s]));
+  const next = JSON.parse(JSON.stringify(plan));
+  for (const shot of next.shots) {
+    const f = fixes.get(shot.index + 1);
+    if (!f) continue;
+    if (String(f.action || '').trim()) shot.action = String(f.action).trim();
+    if (String(f.performance || '').trim()) shot.performance = String(f.performance).trim();
+    if (String(f.objective || '').trim()) shot.objective = String(f.objective).trim();
+  }
+  next.shots = extendSilentBeat(next).shots;
+  return next;
 }
 
 /* ---------------------------- 主流程 ---------------------------- */
@@ -1390,6 +1485,67 @@ export function apply(ctx) {
         } catch (error) {
           sendJson(response, 502, { error: 'plan_failed', message: friendlyError(error) });
         }
+      },
+    }));
+
+    /** 弱镜返修：按体检意见重写弱镜，返回新 plan 与前后分数。 */
+    disposers.push(webServer.register({
+      kind: 'exact',
+      path: '/api/comfyui-music-mv/polish-shots',
+      handler: async (request, response) => {
+        if (request.method !== 'POST') { sendJson(response, 405, { error: 'method_not_allowed' }); return; }
+        if (!sameOrigin(request)) { sendJson(response, 403, { error: 'forbidden: same-origin only' }); return; }
+        let body = null;
+        try { body = await readJsonBody(request); } catch { body = null; }
+        if (!body) { sendJson(response, 400, { error: 'bad_body' }); return; }
+        let plan = body.plan && typeof body.plan === 'object' ? body.plan : null;
+        if (!plan && body.id) {
+          const job = jobStore.get(String(body.id));
+          if (!job) { sendJson(response, 404, { error: 'job_not_found' }); return; }
+          plan = job.plan;
+        }
+        if (!plan || !Array.isArray(plan.shots) || !plan.shots.length) {
+          sendJson(response, 400, { error: 'plan_required', message: '要么给 plan，要么给任务 id' });
+          return;
+        }
+        try {
+          const before = await reviewPlan(ctx, plan);
+          const weakItems = before.shots.filter((s) => (body.all ? true : s.total <= 14));
+          const next = await rewriteShots(ctx, plan, weakItems);
+          const after = body.recheck === false ? null : await reviewPlan(ctx, next);
+          sendJson(response, 200, {
+            plan: next,
+            before: { avg: before.avg, weak: before.weak, overall: before.overall },
+            after: after ? { avg: after.avg, weak: after.weak, overall: after.overall, shots: after.shots } : null,
+            rewritten: weakItems.map((s) => s.i),
+          });
+        } catch (error) {
+          sendJson(response, 500, { error: 'polish_failed', message: String((error && error.message) || error) });
+        }
+      },
+    }));
+
+    /** 分镜体检：按"一眼读懂"四项打分，指出弱镜与改法。 */
+    disposers.push(webServer.register({
+      kind: 'exact',
+      path: '/api/comfyui-music-mv/review',
+      handler: async (request, response) => {
+        if (request.method !== 'POST') { sendJson(response, 405, { error: 'method_not_allowed' }); return; }
+        if (!sameOrigin(request)) { sendJson(response, 403, { error: 'forbidden: same-origin only' }); return; }
+        let body = null;
+        try { body = await readJsonBody(request); } catch { body = null; }
+        if (!body) { sendJson(response, 400, { error: 'bad_body' }); return; }
+        let plan = body.plan && typeof body.plan === 'object' ? body.plan : null;
+        if (!plan && body.id) {
+          const job = jobStore.get(String(body.id));
+          if (!job) { sendJson(response, 404, { error: 'job_not_found' }); return; }
+          plan = job.plan;
+        }
+        if (!plan || !Array.isArray(plan.shots) || !plan.shots.length) {
+          sendJson(response, 400, { error: 'plan_required', message: '要么给 plan，要么给任务 id' });
+          return;
+        }
+        sendJson(response, 200, await reviewPlan(ctx, plan));
       },
     }));
 
