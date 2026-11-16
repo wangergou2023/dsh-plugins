@@ -300,7 +300,7 @@ function planSystemPrompt(shotCount, duration) {
     '  "arc": "情绪曲线：起…（前奏）承…（主歌）转…（副歌爆发）合…（尾声）",',
     '  "ending": "结尾画面：最后一个镜头怎么收",',
     '  "notes": "导演阐述一两句：视觉基调、调色、为什么这么拍",',
-    '  "twist": { "what": "一句话说清揭示：观众前半段以为 A，第 N 镜发现其实是 B（必须具体到动作或物件，不写\"原来是爱\"这种空话）", "atIndex": "揭示发生在第几镜（1 开始），必须落在全片 60%–85%" },',
+    '  "twist": { "what": "一句话说清揭示：前半段以为 A，第 N 镜发现其实是 B（具体到动作或物件）", "atIndex": "揭示发生在第几镜（1 开始），必须落在全片 60%–85%", "sign": "这一镜里看得见的那一个物理细节：不等台词、不靠解释，观众看见就懂。例：香烧到第三指节时他鬓角白了一缕" },',
     '  "scenes": [{',
     '    "no": "场号，例如 1",',
     '    "heading": "场次标题：内景/外景 · 地点 · 时间（例如 外景 忘川渡口 夜 雨）",',
@@ -368,6 +368,7 @@ function planSystemPrompt(shotCount, duration) {
     'H. 全片至少要有一镜「不说话、只有动作」的完整 10 秒，让表演自己说完；那一镜的表演密度要最高。',
     'I. 歌词不能复述画面。画面在做事，歌词在说别的事，两者错位才高级；只有副歌那句可以和画面对上。',
     'J. twist 必须是「动作级的揭示」，不是「原来是爱」这种概念。合格例子：她一直在等电话，最后发现电话线从没插上；她每天给他留半块糖，最后一镜她把糖自己吃了。不合格：他们其实深爱彼此。',
+    'J2. twist.sign 必须是**看得见的一个瞬间**，不许写解释。合格：香烧到第三指节时他鬓角白了一缕、她把糖纸叠成很小一块塞回口袋、他吹灭蜡烛时手没有抖。不合格：观众这时才发现他其实早就知道、这象征着他们注定分离。',
     'K. 全片不能一直压着。中段（30%–60%）必须有一镜是真的放松：笑出来、松一口气、把肩膀放下来——压抑要有对比才成立。',
     'L. logline 只写表层：谁想要什么、被什么拦住。不许在 logline 里剧透揭示（禁止出现「其实」「真相」「原来」「实际上」）——揭示只放在 twist 里。',
   ].join('\n');
@@ -386,7 +387,7 @@ function planScriptPrompt(duration) {
     '  "arc": "情绪曲线：起（前奏）承（主歌）转（副歌）合（尾声）",',
     '  "ending": "最后一个镜头怎么收",',
     '  "notes": "导演阐述：视觉基调、调色、为什么这么拍",',
-    '  "twist": { "what": "一句话说清揭示：观众前半段以为 A，第 N 镜发现其实是 B（具体到动作或物件）", "atIndex": "揭示发生在第几镜（1 开始），落在全片 60%–85%" },',
+    '  "twist": { "what": "一句话说清揭示：前半段以为 A，第 N 镜发现其实是 B（具体到动作或物件）", "atIndex": "揭示发生在第几镜（1 开始），落在全片 60%–85%", "sign": "这一镜里看得见的那一个物理细节：不等台词、不靠解释，观众看见就懂" }',
     '  "style": "曲风（英文更稳）：流派、乐器、人声、情绪、速度",',
     '  "look": "视觉基调一句话，只写画面：胶片感/调色/镜头/光线",',
     '  "characters": [{ "name": "2-4 字", "look": "年龄性别、发型发色、五官、服装配饰" }],',
@@ -562,7 +563,7 @@ async function generatePlan(ctx, params) {
   if (shotCount <= 10) {
     const { text: raw, model } = await llmText(ctx, planSystemPrompt(shotCount, duration), userLines.join('\n'), { maxTokens: 6000 });
     const data = parsePlanJson(raw);
-    const plan = mergeScenes(await repairBookend(ctx, trimLongActions(await addWarmBeat(ctx, relieveSilence(breakLyricDup(extendSilentBeat(normalizePlan(data, { duration, shotCount }))))))));
+    const plan = mergeScenes(trimLongActions(await repairBookend(ctx, await addWarmBeat(ctx, relieveSilence(breakLyricDup(extendSilentBeat(normalizePlan(data, { duration, shotCount }))))))));
     return { plan, model, raw, lint: lintPlan(plan) };
   }
 
@@ -596,7 +597,7 @@ async function generatePlan(ctx, params) {
     if (Array.isArray(part && part.shots)) shots.push(...part.shots);
   }
   if (!shots.length) throw new Error('分镜生成失败：模型返回里没有 shots');
-  const plan = mergeScenes(await repairBookend(ctx, trimLongActions(await addWarmBeat(ctx, relieveSilence(breakLyricDup(extendSilentBeat(normalizePlan({ ...head, shots }, { duration, shotCount }))))))));
+  const plan = mergeScenes(trimLongActions(await repairBookend(ctx, await addWarmBeat(ctx, relieveSilence(breakLyricDup(extendSilentBeat(normalizePlan({ ...head, shots }, { duration, shotCount }))))))));
   return { plan, model, raw: rawHead, lint: lintPlan(plan) };
 }
 

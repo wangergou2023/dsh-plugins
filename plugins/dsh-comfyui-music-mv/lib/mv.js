@@ -359,6 +359,8 @@ export function normalizePlan(data, opts = {}) {
       what: String((data && data.twist && (data.twist.what || data.twist.reveal || data.twist.content))
         || (typeof (data && data.twist) === 'string' ? data.twist : '') || '').trim(),
       atIndex: Number(data && data.twist && (data.twist.atIndex !== undefined ? data.twist.atIndex : data.twist.at)) || 0,
+      // 可拍的物理信号：观众看见就懂，不需要任何解释。这才是影帝级的揭示方式。
+      sign: String((data && data.twist && (data.twist.sign || data.twist.evidence || data.twist.physical || data.twist.detail)) || '').trim(),
     },
     duration,
     shotCount: shots.length,
@@ -1055,6 +1057,16 @@ export function lintPlan(plan) {
     .filter((x) => x.hit && x.i / Math.max(1, shots.length - 1) >= 0.18 && x.i / Math.max(1, shots.length - 1) <= 0.68);
   push('contrast', '中段有一处真的放松', warmIdx.length >= 1,
     warmIdx.length ? `第 ${warmIdx.map((x) => x.i + 1).join('、')} 镜有正向瞬间` : '全片一直压着，观众会麻');
+
+  // 15.5 揭示必须有一个可拍的物理信号：观众看见就懂，不靠台词、不靠解释
+  const SIGN_BAN = /观众|说明|意味着|其实|原来|暗示|表达|象征|代表/;
+  const sign = String(twist.sign || '').trim();
+  const signOk = sign.length >= 8 && !SIGN_BAN.test(sign);
+  push('twist-sign', '揭示靠一个可拍的物理信号', signOk,
+    signOk
+      ? `第 ${twistAt} 镜的信号：${sign.slice(0, 34)}`
+      : (sign ? `twist.sign 里还夹着解释性的词（观众/说明/意味着…），要改成看得见的东西：${sign.slice(0, 24)}`
+        : '没写 twist.sign——揭示不能靠旁白，要有一个看得见的物理细节'));
 
   // 16. 笑必须和揭示咬在同一件东西上：笑声里手里的东西 = 后来揭示的东西
   const twistShot = shots[twistAt - 1];

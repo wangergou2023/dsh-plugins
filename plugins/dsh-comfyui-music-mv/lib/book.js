@@ -176,6 +176,7 @@ function creditsSection(plan, job) {
   const castLine = cast.length ? `<p><b>角色</b>　${cast.map((c) => esc(c.name || '')).filter(Boolean).join(' · ')}</p>` : '';
   const twist = plan.twist && plan.twist.what
     ? `<p><b>结构</b>　第 ${esc(plan.twist.atIndex || '?')} 镜揭示：${esc(plan.twist.what)}</p>`
+      + (plan.twist.sign ? `<p><b>画面信号</b>　${esc(plan.twist.sign)}<span class="dim">（这一格只拍这个，不加台词、不加解释）</span></p>` : '')
     : '';
   return `<h2>主创与基调</h2>
 <p><b>曲风</b>　${esc(plan.style || '')}</p>
