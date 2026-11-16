@@ -20,7 +20,7 @@ import {
   LIMITS, audioDuration, buildFramePrompt, buildShotVideoPrompt, buildTailFramePrompt,
   buildSliceAudioPrompt, buildStitchPrompt, fetchVideo, fetchComfyImage, fetchComfyAudio,
   firstOutputImage, saveVideo, saveFrame, normalizePlan, parsePlanJson, suggestShotCount,
-  charactersOf, castOf, lintPlan, segmentLyrics, composeFramePrompt, splitLook,
+  charactersOf, castOf, lintPlan, segmentLyrics, composeFramePrompt, splitLook, extendSilentBeat,
 } from './lib/mv.js';
 import { vocab, cameraSummary } from './lib/shotlang.js';
 import { probeFfmpeg, stitchWithTransitions, concatAudio } from './lib/ffmpeg.js';
@@ -312,7 +312,7 @@ function planSystemPrompt(shotCount, duration) {
     '  "lyrics": "完整歌词，用 [Verse] [Chorus] [Bridge] 标记段落，每句一行",',
     '  "shots": [{',
     '    "label": "镜头标题（两句内）",',
-    '    "section": "对应哪段歌词，例如 [Chorus] 第1句",',
+    '    "section": "段落标签，只能填 Verse|Pre-Chorus|Chorus|Bridge|Intro|Outro（副歌就填 Chorus，不要填歌词句子）",',
     '    "beat": "这一镜的情绪，两三个词",',
     '    "scene": "地点与环境，写具体：什么样的地方、有什么东西",',
     '    "time": "时间与天气，例如 深夜暴雨 / 清晨微光",',
@@ -554,7 +554,7 @@ async function generatePlan(ctx, params) {
   if (shotCount <= 10) {
     const { text: raw, model } = await llmText(ctx, planSystemPrompt(shotCount, duration), userLines.join('\n'), { maxTokens: 6000 });
     const data = parsePlanJson(raw);
-    const plan = await repairBookend(ctx, relieveSilence(normalizePlan(data, { duration, shotCount })));
+    const plan = await repairBookend(ctx, relieveSilence(extendSilentBeat(normalizePlan(data, { duration, shotCount }))));
     return { plan, model, raw, lint: lintPlan(plan) };
   }
 
@@ -588,7 +588,7 @@ async function generatePlan(ctx, params) {
     if (Array.isArray(part && part.shots)) shots.push(...part.shots);
   }
   if (!shots.length) throw new Error('分镜生成失败：模型返回里没有 shots');
-  const plan = await repairBookend(ctx, relieveSilence(normalizePlan({ ...head, shots }, { duration, shotCount })));
+  const plan = await repairBookend(ctx, relieveSilence(extendSilentBeat(normalizePlan({ ...head, shots }, { duration, shotCount }))));
   return { plan, model, raw: rawHead, lint: lintPlan(plan) };
 }
 

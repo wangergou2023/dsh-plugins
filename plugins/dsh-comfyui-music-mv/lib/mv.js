@@ -112,6 +112,81 @@ export function allocateTimeline(duration, count) {
   return shots;
 }
 
+/**
+ * 按段落变速的时间轴：副歌切短、主歌放长、桥段与尾奏更慢。
+ * 全片等长是业余感的来源之一——MV 的节奏本来就该跟着歌走。
+ * meta[i] = { section, move }，权重越高镜越长。
+ */
+export function allocateRhythmTimeline(duration, meta = []) {
+  const total = Math.max(0.1, Number(duration) || 0);
+  const n = Math.max(1, meta.length);
+  if (!meta.length) return allocateTimeline(total, n);
+
+  const weightOf = (m) => {
+    const sec = String((m && m.section) || '').toLowerCase();
+    if (/chorus|副歌/.test(sec) && !/pre/.test(sec)) return 0.62;
+    if (/pre-?chorus|导歌/.test(sec)) return 0.8;
+    if (/bridge|桥/.test(sec)) return 1.3;
+    if (/intro|前奏/.test(sec)) return 1.4;
+    if (/outro|尾奏/.test(sec)) return 1.3;
+    if (/verse|主歌/.test(sec)) return 1;
+    // 模型常把歌词句子填进 section——被反复引用的那句就是副歌钩子
+    if (m && m.repeats >= 3) return 0.62;
+    const mv = String((m && m.move) || '');
+    if (/whip|crash|swish/.test(mv)) return 0.78;
+    return 1;
+  };
+
+  const freq = new Map();
+  for (const m of meta) {
+    const key = String((m && m.section) || '').replace(/\s+/g, '').slice(0, 12);
+    if (key) freq.set(key, (freq.get(key) || 0) + 1);
+  }
+  const metaWithCount = meta.map((m) => {
+    const key = String((m && m.section) || '').replace(/\s+/g, '').slice(0, 12);
+    return { ...m, repeats: key ? freq.get(key) || 1 : 1 };
+  });
+  const weights = metaWithCount.map((m, i) => weightOf(m) * (1 + 0.12 * Math.sin(i * 1.9)));
+  const MIN = LIMITS.shotMinSeconds;
+  const MAX = LIMITS.shotMaxSeconds;
+  const lens = new Array(n).fill(0);
+  let free = weights.map((_, i) => i);
+  let remaining = total;
+  let guard = 0;
+
+  while (free.length && guard < 40) {
+    guard += 1;
+    const sum = free.reduce((a, i) => a + weights[i], 0) || 1;
+    let clamped = false;
+    for (const i of [...free]) {
+      const want = (remaining * weights[i]) / sum;
+      if (want < MIN) {
+        lens[i] = MIN; remaining -= MIN; free = free.filter((j) => j !== i); clamped = true;
+      } else if (want > MAX) {
+        lens[i] = MAX; remaining -= MAX; free = free.filter((j) => j !== i); clamped = true;
+      }
+    }
+    if (!clamped) {
+      for (const i of free) lens[i] = (remaining * weights[i]) / sum;
+      free = [];
+    }
+  }
+
+  const sumLen = lens.reduce((a, b) => a + b, 0);
+  if (!(sumLen > 0)) return allocateTimeline(total, n);
+  const k = total / sumLen;
+  let t = 0;
+  const out = [];
+  for (let i = 0; i < n; i += 1) {
+    const len = lens[i] * k;
+    const start = Math.round(t * 100) / 100;
+    const end = i === n - 1 ? Math.round(total * 100) / 100 : Math.round((t + len) * 100) / 100;
+    out.push({ index: i, start, end, seconds: Math.round((end - start) * 100) / 100 });
+    t = end;
+  }
+  return out;
+}
+
 /* --------------------------- 分镜表 --------------------------- */
 
 /** 从模型输出里抠出 JSON（容忍代码块、前后废话）。 */
@@ -145,7 +220,11 @@ export function normalizePlan(data, opts = {}) {
   const rawShots = Array.isArray(data && data.shots) ? data.shots : [];
   const wanted = Number(opts.shotCount) || suggestShotCount(duration);
   const count = Math.max(1, Math.min(LIMITS.maxShots, Math.min(wanted, Math.max(1, rawShots.length || wanted))));
-  const timeline = allocateTimeline(duration, count);
+  const meta = rawShots.slice(0, count).map((s) => ({
+    section: (s && (s.section || s.lyricSection)) || '',
+    move: (s && (s.move || s.movement)) || '',
+  }));
+  const timeline = opts.rhythm === false ? allocateTimeline(duration, count) : allocateRhythmTimeline(duration, meta);
   const storySrc = (data && data.story && typeof data.story === 'object') ? data.story : {};
 
   const picks = (...keys) => {
@@ -678,6 +757,45 @@ export function mimeOf(file) {
  * 把「这支 MV 好不好」变成可数的检查项。
  * 全部是结构指标，不需要看画面：用户可以只凭这些判断剧本该不该开拍。
  */
+/**
+ * 沉默那一镜如果太短（< minSeconds），从相邻镜头借时间把它撑到 8 秒。
+ * 宁可少唱一句，也要留一镜让表演自己说完——这是硬指标，靠"抽台词"糊弄不过去。
+ */
+export function extendSilentBeat(plan, minSeconds = 8) {
+  const shots = (Array.isArray(plan && plan.shots) ? plan.shots : []).map((s) => ({ ...s }));
+  if (shots.length < 2) return plan;
+  const MIN = LIMITS.shotMinSeconds;
+  let changed = false;
+
+  shots.forEach((s, i) => {
+    if (String(s.dialogue || '').trim()) return;
+    let need = Math.round((minSeconds - (s.end - s.start)) * 100) / 100;
+    if (need <= 0.01) return;
+    const order = i + 1 < shots.length ? [i + 1, i - 1] : [i - 1];
+    for (const j of order) {
+      if (need <= 0.01) break;
+      if (j < 0 || j >= shots.length) continue;
+      const nb = shots[j];
+      const spare = Math.round(((nb.end - nb.start) - MIN) * 100) / 100;
+      if (spare <= 0.01) continue;
+      const take = Math.min(spare, need);
+      if (j > i) {
+        nb.start = Math.round((nb.start + take) * 100) / 100;
+        s.end = Math.round((s.end + take) * 100) / 100;
+      } else {
+        nb.end = Math.round((nb.end - take) * 100) / 100;
+        s.start = Math.round((s.start - take) * 100) / 100;
+      }
+      need = Math.round((need - take) * 100) / 100;
+      changed = true;
+    }
+  });
+
+  if (!changed) return plan;
+  const fixed = shots.map((s) => ({ ...s, seconds: Math.round((s.end - s.start) * 100) / 100 }));
+  return { ...plan, shots: fixed };
+}
+
 export function lintPlan(plan) {
   const shots = Array.isArray(plan && plan.shots) ? plan.shots : [];
   const props = Array.isArray(plan && plan.props) ? plan.props : [];
@@ -760,6 +878,15 @@ export function lintPlan(plan) {
   const silent = shots.filter((s) => !String(s.dialogue || '').trim() && (s.end - s.start) >= 8);
   push('silence', '有一镜不说话', silent.length >= 1,
     silent.length ? `第 ${silent.map((s) => s.index + 1).join('、')} 镜不说话，只有动作` : '每一镜都在唱，没有留给表演的空白');
+
+  // 12. 剪辑节奏：镜头要有长有短，全片等长是业余感
+  const lens = shots.map((s) => Math.round((s.end - s.start) * 100) / 100).filter((v) => v > 0);
+  const longest = lens.length ? Math.max(...lens) : 0;
+  const shortest = lens.length ? Math.min(...lens) : 0;
+  const ratio = shortest ? longest / shortest : 1;
+  const distinct = new Set(lens.map((v) => v.toFixed(1))).size;
+  push('rhythm', '镜头有长有短（跟歌走）', ratio >= 1.5 && distinct >= 3,
+    `${shortest.toFixed(1)}–${longest.toFixed(1)} 秒，长短比 ${ratio.toFixed(1)}，${distinct} 种长度`);
 
   const passed = checks.filter((c) => c.ok).length;
   const total = checks.length || 1;
