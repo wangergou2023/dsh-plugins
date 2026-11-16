@@ -596,6 +596,20 @@ export function breakLyricDup(plan) {
   return plan;
 }
 
+/**
+ * 本体镜里不能出现"人的手"。动作是写人形时写的，改成爪/前腿再喂给模型，
+ * 否则画出来就是"一只狗 + 一只人的手"（实测第 4 格：狗爪旁边一只人手拿着怀表）。
+ */
+export function beastAction(action) {
+  return String(action || '')
+    .replace(/右手/g, '右前爪').replace(/左手/g, '左前爪')
+    .replace(/双手/g, '两只前爪').replace(/手掌/g, '爪垫')
+    .replace(/手背/g, '前爪背面').replace(/手腕/g, '前腿').replace(/胳膊/g, '前腿')
+    .replace(/指尖/g, '爪尖').replace(/手指/g, '爪尖').replace(/指甲/g, '爪尖')
+    .replace(/手里/g, '爪子里').replace(/手中/g, '爪子里')
+    .replace(/手/g, '爪');
+}
+
 export function composeFramePrompt(plan, shot) {
   const parts = [];
   const cast = castOf(plan, shot);
@@ -615,7 +629,9 @@ export function composeFramePrompt(plan, shot) {
   // 插入镜（insert）：揭示镜或纯物件镜，主体是"东西"不是"人"。
   // 这类镜头如果把人物外形写在最前面，模型一定交回来一张人脸特写——
   // 所以人物降级成"远处一个模糊人影"，物件提到最前面。
-  const insertShot = Boolean(
+  // 同框镜（mixed）不按插入镜处理：这一格要同时看见人和本体，
+  // 一旦按插入镜写成"画面里没有人"，狗或人就整只消失了（实测第 8 格狗没了）。
+  const insertShot = declaredForm === 'mixed' ? false : Boolean(
     (plan.twist && Number(plan.twist.atIndex) === shot.index + 1 && plan.twist.sign)
     || shot.insert === true,
   );
@@ -626,6 +642,26 @@ export function composeFramePrompt(plan, shot) {
     parts.push(`画面主体是物件，不是人：${subject}`);
     const who = cast.length ? cast.map((c) => c.name).join('和') : '';
     parts.push(`人物的脸不在画面里${who ? `（${who}最多是焦外的一截手臂或一个模糊的背影）` : ''}，镜头贴着这件东西拍，看得清材质、磨损和灰`);
+  } else if (cast.length && mixedShot) {
+    // 同框镜必须点名"两个分开的主体"。只把两套外形连在一句话里，模型会把它们揉成一个
+    // 狗头人身的东西（实测第 8 格）。
+    const a = cast[0];
+    const b = cast[1] || cast[0];
+    const aBeast = String(a.beast || splitLook(a.look).beast || '').trim();
+    const bHuman = String(splitLook(b.look).human || b.look || '').trim();
+    if (cast.length >= 2) {
+      parts.push([
+        '画面里是两个分开的主体，各占画面一侧，绝对不要融合成同一个生物：',
+        `①${a.name}，${aBeast || '非人形态（动物或骨架）'}`,
+        `②${b.name}，${bHuman || b.name}`,
+      ].join(''));
+    } else {
+      // 只有一个角色：这一格是"本体 + 人的痕迹"，不是人和兽并排，更不能长成狗头人。
+      parts.push([
+        `画面主体是${a.name}的本体：${aBeast || '动物或骨架'}，`,
+        '画面边缘可以出现一只人手、或一个看不清脸的人影，但绝不能出现狗头人身这种融合体',
+      ].join(''));
+    }
   } else if (cast.length) {
     parts.push(cast.map((c) => {
       const forms = splitLook(c.look);
@@ -647,7 +683,7 @@ export function composeFramePrompt(plan, shot) {
   }
   if (!insertShot && shot.scene) parts.push(shot.scene);
   if (!insertShot && shot.time) parts.push(shot.time);
-  if (!insertShot && shot.action) parts.push(shot.action);
+  if (!insertShot && shot.action) parts.push(beastShot ? beastAction(shot.action) : shot.action);
   // 定格：动作是「一段时间」，静帧只能截「一刻」。变形这类过程镜必须另外指定截在哪一刻，
   // 否则模型只能猜，猜出来就是「已经变完」或者「完全没变」。
   if (shot.stillFrame) parts.push(`这一格定格在：${shot.stillFrame}`);
