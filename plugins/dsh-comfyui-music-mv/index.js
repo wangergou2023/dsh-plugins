@@ -562,7 +562,7 @@ async function generatePlan(ctx, params) {
   if (shotCount <= 10) {
     const { text: raw, model } = await llmText(ctx, planSystemPrompt(shotCount, duration), userLines.join('\n'), { maxTokens: 6000 });
     const data = parsePlanJson(raw);
-    const plan = mergeScenes(await repairBookend(ctx, trimLongActions(relieveSilence(breakLyricDup(extendSilentBeat(normalizePlan(data, { duration, shotCount })))))));
+    const plan = mergeScenes(await repairBookend(ctx, await addWarmBeat(ctx, trimLongActions(relieveSilence(breakLyricDup(extendSilentBeat(normalizePlan(data, { duration, shotCount }))))))));
     return { plan, model, raw, lint: lintPlan(plan) };
   }
 
@@ -596,7 +596,7 @@ async function generatePlan(ctx, params) {
     if (Array.isArray(part && part.shots)) shots.push(...part.shots);
   }
   if (!shots.length) throw new Error('分镜生成失败：模型返回里没有 shots');
-  const plan = mergeScenes(await repairBookend(ctx, trimLongActions(relieveSilence(breakLyricDup(extendSilentBeat(normalizePlan({ ...head, shots }, { duration, shotCount })))))));
+  const plan = mergeScenes(await repairBookend(ctx, await addWarmBeat(ctx, trimLongActions(relieveSilence(breakLyricDup(extendSilentBeat(normalizePlan({ ...head, shots }, { duration, shotCount }))))))));
   return { plan, model, raw: rawHead, lint: lintPlan(plan) };
 }
 
@@ -730,6 +730,65 @@ async function rewriteShots(ctx, plan, items) {
   }
   next.shots = extendSilentBeat(next).shots;
   return next;
+}
+
+/* ---------------------------- 情绪对比返修 ---------------------------- */
+
+const WARM_SYSTEM = `你是分镜医生。这支 MV 从头到尾都在压抑，观众会麻。你要挑中的那一镜，让里面的人真的松一次。
+
+只改这一镜的 action 和 performance，其余字段一律不动。规则：
+1. 这一镜必须有一个人真的放松：笑出来、把肩膀放下来、松一口气、忍不住笑出声、仰头笑。不是"微笑"这种静态表情，是一个发生的动作。
+2. 保持与前后镜头的动作连续：这一镜开始时人物在什么姿势、什么位置，必须接得上上一镜的结尾。
+3. performance 仍写成"先做→停在哪→最后做"，落到身体细节（嘴角、肩膀、呼吸、眼角）。
+4. action 12–90 字，只写看得见的物理事件。
+5. 不许改剧情走向、不许新增道具、不许改台词。
+
+只输出 JSON：{"action":"…","performance":"…"}`;
+
+async function addWarmBeat(ctx, plan) {
+  const before = lintPlan(plan);
+  const contrast = before.checks.find((c) => c.id === 'contrast');
+  if (!contrast || contrast.ok) return plan;
+  const shots = plan.shots || [];
+  if (!shots.length) return plan;
+  const span = Math.max(1, shots.length - 1);
+  const inWindow = shots.filter((s) => {
+    const p = s.index / span;
+    return p >= 0.18 && p <= 0.68;
+  });
+  if (!inWindow.length) return plan;
+  // 优先挑"两个人都在场、且不在流血/死亡"的一镜：那里放一个笑最自然
+  const score = (s) => {
+    let v = 0;
+    if ((s.cast || []).length >= 2) v += 3;
+    if (['medium', 'wide'].includes(s.size)) v += 2;
+    if (/血|死|灭|哭|丧|碎|断/.test(`${s.action || ''}`)) v -= 3;
+    return v;
+  };
+  const target = inWindow.slice().sort((a, b) => score(b) - score(a))[0];
+  const prev = shots[target.index - 1];
+  const next = shots[target.index + 1];
+  const user = [
+    `片名：《${plan.title}》　一句话：${plan.story && plan.story.logline}`,
+    `全片情绪曲线：${(plan.story && plan.story.arc) || '（未写）'}`,
+    `要改的是第 ${target.index + 1} 镜（全片 ${shots.length} 镜，时长 ${Number(target.seconds.toFixed(1))} 秒）：`,
+    JSON.stringify({
+      label: target.label, size: target.size, move: target.move, prop: target.prop,
+      action: target.action, performance: target.performance, objective: target.objective,
+      cast: target.cast, dialogue: target.dialogue || '（不说话）',
+    }, null, 1),
+    `上一镜结尾：${prev ? String(prev.action || '').slice(-40) : '（无）'}`,
+    `下一镜开始：${next ? String(next.action || '').slice(0, 40) : '（无）'}`,
+  ].join('\n');
+  const { text: raw } = await llmText(ctx, WARM_SYSTEM, user, { maxTokens: 500 });
+  const data = parsePlanJson(raw);
+  const action = String((data && data.action) || '').trim();
+  const performance = String((data && data.performance) || '').trim();
+  if (!action || !performance) return plan;
+  const out = JSON.parse(JSON.stringify(plan));
+  out.shots[target.index].action = action;
+  out.shots[target.index].performance = performance;
+  return out;
 }
 
 /* ---------------------------- 主流程 ---------------------------- */
