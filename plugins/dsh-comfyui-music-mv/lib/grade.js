@@ -68,9 +68,16 @@ function run(bin, args, timeoutMs = 900000) {  return new Promise((resolve, reje
  * @param grade     是否调色
  * @param grain     是否加胶片颗粒
  */
-export async function cinematicPass({ pluginDir, input, output, title, subtitle, crop = true, grade = true, grain = true, timeoutMs }) {
+export async function cinematicPass({ pluginDir, input, output, title, subtitle, crop = true, grade = true, grain = true, duration = 0, timeoutMs }) {
   const bin = findFfmpeg(pluginDir);
   const filters = [];
+
+  // 片头淡入 + 片尾淡出（黑场收尾，比直接断掉有电影感）
+  if (Number(duration) > 4) {
+    const d = Number(duration);
+    filters.push('fade=t=in:st=0:d=0.7');
+    filters.push(`fade=t=out:st=${Math.max(0, d - 1.8).toFixed(2)}:d=1.8`);
+  }
 
   // 2.35:1 遮幅：裁掉上下，不做加黑边（播放器自己会加）
   if (crop) filters.push('crop=iw:min(ih\\,iw/2.35):0:(ih-min(ih\\,iw/2.35))/2');

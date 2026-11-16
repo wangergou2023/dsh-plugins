@@ -492,6 +492,7 @@ async function buildFinal(client, job, options = {}) {
         crop: options.crop !== false,
         grade: true,
         grain: true,
+        duration: songDur,
       });
       result = { buffer: await fs.readFile(g.file), file: g.file, mode: result.mode + ' + 电影质感' };
     } catch (error) {
