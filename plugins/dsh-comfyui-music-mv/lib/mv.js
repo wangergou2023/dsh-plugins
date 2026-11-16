@@ -518,6 +518,21 @@ export function trimLongActions(plan, max = 90) {
   return plan;
 }
 
+/** logline 只写表层：把带剧透词的分句砍掉，剩下的如果太短就保留原句。 */
+export function cleanLogline(plan) {
+  const story = (plan && plan.story) || {};
+  const raw = String(story.logline || '').trim();
+  if (!raw) return plan;
+  const leak = /其实|真相|原来|实际上|竟是|才发现|却是/;
+  if (!leak.test(raw)) return plan;
+  const parts = raw.split(/(?<=[。；，、])/).filter(Boolean);
+  const kept = parts.filter((p) => !leak.test(p));
+  const next = kept.join('').replace(/[，、；]$/, '').trim();
+  const nextStory = { ...story, logline: next.length >= 10 ? next : raw };
+  plan.story = nextStory;
+  return plan;
+}
+
 /** 同一句唱词铺满三格时，把多出来的那几格换成半句：歌词重复是歌的事，画面不能靠一句话过三关。 */
 export function breakLyricDup(plan) {
   const shots = Array.isArray(plan && plan.shots) ? plan.shots : [];

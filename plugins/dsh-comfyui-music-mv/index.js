@@ -20,7 +20,7 @@ import {
   LIMITS, audioDuration, buildFramePrompt, buildShotVideoPrompt, buildTailFramePrompt,
   buildSliceAudioPrompt, buildStitchPrompt, fetchVideo, fetchComfyImage, fetchComfyAudio,
   firstOutputImage, saveVideo, saveFrame, normalizePlan, parsePlanJson, suggestShotCount,
-  charactersOf, castOf, lintPlan, segmentLyrics, composeFramePrompt, splitLook, extendSilentBeat, breakLyricDup, heroFormSpecs, trimLongActions, mergeScenes,
+  charactersOf, castOf, lintPlan, segmentLyrics, composeFramePrompt, splitLook, extendSilentBeat, breakLyricDup, heroFormSpecs, trimLongActions, mergeScenes, cleanLogline,
 } from './lib/mv.js';
 import { vocab, cameraSummary } from './lib/shotlang.js';
 import { probeFfmpeg, stitchWithTransitions, concatAudio } from './lib/ffmpeg.js';
@@ -563,7 +563,7 @@ async function generatePlan(ctx, params) {
   if (shotCount <= 10) {
     const { text: raw, model } = await llmText(ctx, planSystemPrompt(shotCount, duration), userLines.join('\n'), { maxTokens: 6000 });
     const data = parsePlanJson(raw);
-    const plan = mergeScenes(trimLongActions(await repairBookend(ctx, await addWarmBeat(ctx, relieveSilence(breakLyricDup(extendSilentBeat(normalizePlan(data, { duration, shotCount }))))))));
+    const plan = cleanLogline(mergeScenes(trimLongActions(await repairBookend(ctx, await addWarmBeat(ctx, relieveSilence(breakLyricDup(extendSilentBeat(normalizePlan(data, { duration, shotCount })))))))));
     return { plan, model, raw, lint: lintPlan(plan) };
   }
 
@@ -597,7 +597,7 @@ async function generatePlan(ctx, params) {
     if (Array.isArray(part && part.shots)) shots.push(...part.shots);
   }
   if (!shots.length) throw new Error('分镜生成失败：模型返回里没有 shots');
-  const plan = mergeScenes(trimLongActions(await repairBookend(ctx, await addWarmBeat(ctx, relieveSilence(breakLyricDup(extendSilentBeat(normalizePlan({ ...head, shots }, { duration, shotCount }))))))));
+  const plan = cleanLogline(mergeScenes(trimLongActions(await repairBookend(ctx, await addWarmBeat(ctx, relieveSilence(breakLyricDup(extendSilentBeat(normalizePlan({ ...head, shots }, { duration, shotCount })))))))));
   return { plan, model, raw: rawHead, lint: lintPlan(plan) };
 }
 
@@ -797,8 +797,17 @@ async function addWarmBeat(ctx, plan) {
   const out = JSON.parse(JSON.stringify(plan));
   out.shots[target.index].action = action;
   out.shots[target.index].performance = performance;
-  if (keyProp && (action.includes(keyProp) || performance.includes(keyProp))) {
-    out.shots[target.index].prop = keyProp;
+  // 模型常常写"有笑没物件"。这里做一次确定性兜底：把揭示的那件东西塞进手里，
+  // 保证"笑过它，再被它反咬"这条线真的接上了。
+  if (keyProp) {
+    const shot = out.shots[target.index];
+    const has = `${shot.action}${shot.performance}${shot.prop}`.includes(keyProp);
+    if (has) {
+      shot.prop = keyProp;
+    } else {
+      shot.action = `${String(shot.action).replace(/[。]$/, '')}，${keyProp}还捏在指间没放下。`;
+      shot.prop = keyProp;
+    }
   }
   return out;
 }
@@ -1641,13 +1650,23 @@ export function apply(ctx) {
     timeoutMs: 300000,
     async execute(args) {
       const started = Date.now();
-      const { plan, lint } = await generatePlan(ctx, {
-        theme: args.theme,
-        duration: args.duration,
-        shotCount: args.shotCount,
-        style: args.style,
-        lyrics: args.lyrics,
-      });
+      // 生成是随机的：同样的主题，一次 100 分、一次 89 分。所以自动重试，
+      // 拿到满分或试满 3 次为止——反正只花 45 秒、不占 GPU。
+      const attempts = [];
+      let best = null;
+      for (let i = 0; i < 3; i += 1) {
+        const got = await generatePlan(ctx, {
+          theme: args.theme,
+          duration: args.duration,
+          shotCount: args.shotCount,
+          style: args.style,
+          lyrics: args.lyrics,
+        });
+        attempts.push(got.lint.score);
+        if (!best || got.lint.score > best.lint.score) best = got;
+        if (got.lint.score >= 100) break;
+      }
+      const { plan, lint } = best;
       const id = 'script_' + Date.now().toString(36);
       const job = { id, plan, shots: plan.shots, heroes: [], song: null, params: {} };
       const html = buildBookHtml(job, { pluginDir: PLUGIN_DIR });
@@ -1661,7 +1680,7 @@ export function apply(ctx) {
       const fails = (lint.checks || []).filter((c) => c.ok === false);
       return text([
         `《${plan.title}》${(plan.shots || []).length} 镜 · ${(plan.scenes || []).length} 场 · ${Math.round((Date.now() - started) / 1000)} 秒`,
-        `体检：${lint.score} 分（${lint.passed}/${lint.total}）${fails.length ? '｜没过：' + fails.map((c) => c.label || c.id).join('、') : ''}`,
+        `体检：${lint.score} 分（${lint.passed}/${lint.total}）${fails.length ? '｜没过：' + fails.map((c) => c.label || c.id).join('、') : ''}${attempts.length > 1 ? `｜试了 ${attempts.length} 次：${attempts.join('→')}` : ''}`,
         `本子：${outFile}（${(html.length / 1024 / 1024).toFixed(2)} MB）`,
         `素材：${(plan.props || []).map((p) => p.name).join('、') || '无'}　｜　下一步可以 mv_book / mv_render`,
       ]);
