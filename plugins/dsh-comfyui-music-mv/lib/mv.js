@@ -1341,6 +1341,23 @@ export function lintPlan(plan) {
   // 2. 表演不重复：任意两镜不能共用同一个开头
   const heads = shots.map((s) => String(s.performance || '').replace(/[，,。；;、\s]/g, '').slice(0, 8));
   const dup = heads.filter((h, i) => h.length >= 4 && heads.indexOf(h) !== i);
+  // 物件三段式：每个 prop 要在前 30%、中段、后 30% 各出现一次（开场 → 回声 → 兑现）。
+  // 只数"出现几次"是不够的：出现了三次但全挤在开头，等于没有兑现。
+  const propNames = Array.isArray(plan.props) ? plan.props.map((p) => (typeof p === 'string' ? p : p && p.name)).filter(Boolean) : [];
+  const arcMiss = [];
+  for (const name of propNames) {
+    const hits = [];
+    shots.forEach((s, i) => {
+      const blob = `${s.prop || ''} ${s.action || ''} ${s.performance || ''} ${s.stillFrame || ''}`;
+      if (blob.includes(name)) hits.push(i / Math.max(1, shots.length - 1));
+    });
+    const early = hits.some((t) => t <= 0.3);
+    const late = hits.some((t) => t >= 0.7);
+    if (hits.length < 3 || !early || !late) arcMiss.push(`${name}（${hits.length} 次${early ? '' : '，开场没出现'}${late ? '' : '，结尾没兑现'}）`);
+  }
+  push('props-arc', '每个物件在前/中/后各落一次', arcMiss.length === 0,
+    arcMiss.length ? arcMiss.join('；') : `${propNames.length} 个物件都完成了开场→回声→兑现`);
+
   // 表演必须是"看得见的身体动作"，不能是情绪形容词——影帝和素人的差别全在这里。
   const BODY = /手|指|腕|手臂|肘|肩|颈|喉|下巴|脸|眼|眼皮|眉|鼻|唇|嘴|牙|舌|呼吸|胸|背|腰|膝|脚|脚趾|脚跟|头发|汗|肌肉|骨节/;
   const EMOTION_ONLY = /^(悲伤|难过|痛苦|绝望|委屈|愤怒|紧张|激动|思念|孤独|失落|开心|幸福|不舍|惶恐)/;
