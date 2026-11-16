@@ -561,7 +561,21 @@ export function composeFramePrompt(plan, shot) {
   const humanShot = /人形|少女|少年|男人|女人|男子|女子|少年|她|他/.test(probe);
   const beastShot = (animalShot || boneShot) && !humanShot;
   const mixedShot = (animalShot || boneShot) && humanShot;
-  if (cast.length) {
+  // 插入镜（insert）：揭示镜或纯物件镜，主体是"东西"不是"人"。
+  // 这类镜头如果把人物外形写在最前面，模型一定交回来一张人脸特写——
+  // 所以人物降级成"远处一个模糊人影"，物件提到最前面。
+  const insertShot = Boolean(
+    (plan.twist && Number(plan.twist.atIndex) === shot.index + 1 && plan.twist.sign)
+    || shot.insert === true,
+  );
+  if (insertShot) {
+    if (shot.scene) parts.push(shot.scene);
+    if (shot.time) parts.push(shot.time);
+    const subject = shot.stillFrame || shot.action || '';
+    parts.push(`画面主体是物件，不是人：${subject}`);
+    const who = cast.length ? cast.map((c) => c.name).join('和') : '';
+    parts.push(`人物的脸不在画面里${who ? `（${who}最多是焦外的一截手臂或一个模糊的背影）` : ''}，镜头贴着这件东西拍，看得清材质、磨损和灰`);
+  } else if (cast.length) {
     parts.push(cast.map((c) => {
       const forms = splitLook(c.look);
       const own = String(c.beast || '').trim();
@@ -580,27 +594,34 @@ export function composeFramePrompt(plan, shot) {
   } else if (plan.character) {
     parts.push(plan.character.replace(/\s+/g, ' ').trim());
   }
-  if (shot.scene) parts.push(shot.scene);
-  if (shot.time) parts.push(shot.time);
-  if (shot.action) parts.push(shot.action);
+  if (!insertShot && shot.scene) parts.push(shot.scene);
+  if (!insertShot && shot.time) parts.push(shot.time);
+  if (!insertShot && shot.action) parts.push(shot.action);
   // 定格：动作是「一段时间」，静帧只能截「一刻」。变形这类过程镜必须另外指定截在哪一刻，
   // 否则模型只能猜，猜出来就是「已经变完」或者「完全没变」。
   if (shot.stillFrame) parts.push(`这一格定格在：${shot.stillFrame}`);
   // 物件点名：动作里没写到它时补一句，保证它真的进画面（写到了就不重复）
   if (shot.prop && !String(shot.action || '').includes(shot.prop)) parts.push(`画面里出现${shot.prop}`);
-  parts.push(cameraFragment(shot));
-  if (shot.beat) parts.push(`情绪：${shot.beat}`);
-  // 表演指向：静帧最容易拍成"站好、看镜头"。给视线落点，并要求动作发生在半途。
-  const eyeline = cast.length > 1
-    ? '视线落在另一个角色身上（脸或手），不看镜头'
-    : (/找|看|望|寻|凝视|盯着|抬头|低头/.test(`${shot.action || ''} ${shot.performance || ''} ${shot.objective || ''}`)
-      ? '视线看向画外的一个具体方向，不看镜头'
-      : '视线落在手里的东西上，不看镜头');
-  parts.push(eyeline);
-  parts.push('捕捉动作正在进行到一半的瞬间（不是摆拍），表情具体、有微小的肌肉动作');
+  if (insertShot) {
+    parts.push('macro close-up on the object, extremely shallow depth of field, static shot, no people in frame');
+  } else {
+    parts.push(cameraFragment(shot));
+    if (shot.beat) parts.push(`情绪：${shot.beat}`);
+    // 表演指向：静帧最容易拍成"站好、看镜头"。给视线落点，并要求动作发生在半途。
+    // 空镜（大远景、没有人）不要写视线——那会把模型逼出一个人来站着。
+    const eyeline = !cast.length
+      ? ''
+      : (cast.length > 1
+        ? '视线落在另一个角色身上（脸或手），不看镜头'
+        : (/找|看|望|寻|凝视|盯着|抬头|低头/.test(`${shot.action || ''} ${shot.performance || ''} ${shot.objective || ''}`)
+          ? '视线看向画外的一个具体方向，不看镜头'
+          : '视线落在手里的东西上，不看镜头'));
+    if (eyeline) parts.push(eyeline);
+    parts.push('捕捉动作正在进行到一半的瞬间（不是摆拍），表情具体、有微小的肌肉动作');
+  }
   // 服装护栏：Krea2 很容易把人形画成赤膊（定妆里写了"穿…"照样脱），
   // 把衣服单独拎出来在镜头描述之后再说一遍，命中最稳。
-  if (cast.length && !beastShot) {
+  if (!insertShot && cast.length && !beastShot) {
     const wardrobe = cast.map((c) => {
       const human = splitLook(c.look).human || '';
       const garment = (human.match(/穿([^，。；]+)/) || [])[1];
