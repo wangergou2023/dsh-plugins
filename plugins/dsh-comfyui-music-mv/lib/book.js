@@ -174,10 +174,14 @@ function creditsSection(plan, job) {
     : '';
   const cast = Array.isArray(plan.characters) ? plan.characters : [];
   const castLine = cast.length ? `<p><b>角色</b>　${cast.map((c) => esc(c.name || '')).filter(Boolean).join(' · ')}</p>` : '';
+  const twist = plan.twist && plan.twist.what
+    ? `<p><b>结构</b>　第 ${esc(plan.twist.atIndex || '?')} 镜揭示：${esc(plan.twist.what)}</p>`
+    : '';
   return `<h2>主创与基调</h2>
 <p><b>曲风</b>　${esc(plan.style || '')}</p>
 <p><b>视觉基调</b>　${esc(plan.look || '')}</p>
 ${castLine}
+${twist}
 ${propList}`;
 }
 

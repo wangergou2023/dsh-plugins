@@ -341,6 +341,13 @@ export function normalizePlan(data, opts = {}) {
       ending: picks('ending', 'finalImage'),
       notes: picks('notes', 'direction', 'directorNotes'),
     },
+    // 结构：观众前半段以为是什么、后半段发现是什么，以及在哪一镜揭示。
+    // 写成字段而不是"请你有转折"，是因为只有写死的字段才能被体检卡住。
+    twist: {
+      what: String((data && data.twist && (data.twist.what || data.twist.reveal || data.twist.content))
+        || (typeof (data && data.twist) === 'string' ? data.twist : '') || '').trim(),
+      atIndex: Number(data && data.twist && (data.twist.atIndex !== undefined ? data.twist.atIndex : data.twist.at)) || 0,
+    },
     duration,
     shotCount: shots.length,
     shots,
@@ -459,6 +466,42 @@ export function eyelineFor(shot, castCount = 0) {
   if (castCount > 1) return '看向对方（脸或手）';
   if (/找|看|望|寻|凝视|盯着|抬头|低头/.test(actingText)) return '看向画外一个具体方向';
   return '看着手里的东西';
+}
+
+/** 模型常把分镜表当剧本交：21 镜就写 21 场。把相邻场次合并成 ≤10 场，保住内容不删戏。 */
+export function mergeScenes(plan, max = 10) {
+  const scenes = Array.isArray(plan && plan.scenes) ? plan.scenes : [];
+  if (scenes.length <= max || !scenes.length) return plan;
+  const group = Math.ceil(scenes.length / max);
+  const merged = [];
+  for (let i = 0; i < scenes.length; i += group) {
+    const chunk = scenes.slice(i, i + group);
+    const first = chunk[0] || {};
+    const join = (key) => chunk.map((s) => String(s[key] || '').trim()).filter(Boolean).join('；');
+    merged.push({
+      no: String(merged.length + 1),
+      heading: first.heading || '',
+      action: join('action'),
+      performance: join('performance'),
+      sound: join('sound'),
+      lyric: chunk.map((s) => s.lyric).find(Boolean) || '',
+    });
+  }
+  plan.scenes = merged;
+  return plan;
+}
+
+/** 动作写超过 90 字的镜头，在标点处截断：一格塞两三个动作是业余写法，截断比删戏安全。 */
+export function trimLongActions(plan, max = 90) {
+  const shots = Array.isArray(plan && plan.shots) ? plan.shots : [];
+  for (const s of shots) {
+    const text = String(s.action || '');
+    if (text.length <= max) continue;
+    const head = text.slice(0, max);
+    const cut = Math.max(head.lastIndexOf('。'), head.lastIndexOf('，'), head.lastIndexOf('；'), head.lastIndexOf('、'));
+    s.action = cut >= 20 ? text.slice(0, cut + 1) : `${head}。`;
+  }
+  return plan;
 }
 
 /** 同一句唱词铺满三格时，把多出来的那几格换成半句：歌词重复是歌的事，画面不能靠一句话过三关。 */
@@ -981,6 +1024,51 @@ export function lintPlan(plan) {
     dupes.length
       ? dupes.map(([k, n]) => `「${k.slice(0, 8)}」×${n}`).join('　')
       : `最多重复 ${Math.max(0, ...lyricCount.values())} 次`);
+
+  // 14. 结构：写死一个「揭示」，并且它必须落在后半段
+  const twist = (plan && plan.twist) || { what: '', atIndex: 0 };
+  const twistAt = Number(twist.atIndex) || 0;
+  const twistPos = shots.length ? twistAt / shots.length : 0;
+  const twistOk = String(twist.what || '').length >= 12 && twistAt >= 1 && twistAt <= shots.length
+    && twistPos >= 0.5 && twistPos <= 0.9;
+  push('turn', '有一个写死的揭示（60%–85% 处）', twistOk,
+    twistOk
+      ? `第 ${twistAt} 镜揭示：${String(twist.what).slice(0, 34)}`
+      : (String(twist.what || '').length < 12 ? '没写清揭示是什么（twist.what）' : `揭示放在第 ${twistAt || '?'} 镜（应落在全片 60%–85%）`));
+
+  // 15. 情绪要有对比：全片不能一直压抑，中段得有一处真的放松/笑
+  const warm = /笑|弯起眼|弯眼|松了口气|松了劲|舒了|笑出声|眯起眼笑/;
+  const warmIdx = shots
+    .map((s, i) => ({ i, hit: warm.test(`${s.performance || ''}${s.action || ''}`) }))
+    .filter((x) => x.hit && x.i / Math.max(1, shots.length - 1) >= 0.18 && x.i / Math.max(1, shots.length - 1) <= 0.68);
+  push('contrast', '中段有一处真的放松', warmIdx.length >= 1,
+    warmIdx.length ? `第 ${warmIdx.map((x) => x.i + 1).join('、')} 镜有正向瞬间` : '全片一直压着，观众会麻');
+
+  // 16. 场次体：场次不等于镜头，21 镜写 21 场说明这是分镜表不是剧本
+  const sceneCount = Array.isArray(plan && plan.scenes) ? plan.scenes.length : 0;
+  const sceneOk = sceneCount >= 4 && sceneCount <= 12;
+  push('scenes-count', '场次体（4–12 场，不是一镜一场）', sceneOk,
+    sceneOk ? `${sceneCount} 场 / ${shots.length} 镜` : `${sceneCount} 场对应 ${shots.length} 镜，写成了分镜体`);
+
+  // 17. logline 只写表层：剧透揭示是 logline 最常见的写法错误
+  const logline = String((plan && plan.story && plan.story.logline) || '');
+  const leakWord = /其实|真相|原来|实际上|secretly/.test(logline);
+  const bigrams = (t) => {
+    const s = String(t || '').replace(/[^\u4e00-\u9fa5A-Za-z0-9]/g, '');
+    const set = new Set();
+    for (let i = 0; i < s.length - 1; i += 1) set.add(s.slice(i, i + 2));
+    return set;
+  };
+  const lb = bigrams(logline);
+  const tb = bigrams(twist.what);
+  let shared = 0;
+  for (const g of tb) if (lb.has(g)) shared += 1;
+  const leakRatio = tb.size ? shared / tb.size : 0;
+  const loglineOk = !leakWord && leakRatio <= 0.3 && logline.length >= 8 && logline.length <= 90;
+  push('logline-clean', 'logline 不剧透揭示', loglineOk,
+    leakWord
+      ? 'logline 里写了「其实/真相/原来」，等于把 reveal 提前说了'
+      : (leakRatio > 0.3 ? `logline 和揭示重合 ${Math.round(leakRatio * 100)}%，等于说漏了` : `${logline.length} 字，未剧透`));
 
   const passed = checks.filter((c) => c.ok).length;
   const total = checks.length || 1;

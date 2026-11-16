@@ -52,9 +52,17 @@ slow push-in dolly · dramatic side lighting · shallow depth of field
 - `performance`：可拍的微动作序列（先做→停在哪→最后做），禁止"他很悲伤"这类形容词
 - `objective`：这一镜他想要什么（要/不要，每镜可以相反）
 - `prop`：物件母题（3–5 个实体，各被 ≥2 镜用到，末镜回到第一个）
+- `twist`：写死的揭示 `{what, atIndex}`——光在提示词里说"你要有转折"模型会敷衍，做成字段才能被卡住
 
-**体检 `lintPlan` 12 项**，不过就自动返修：`repairBookend`（末镜回扣）与 `relieveSilence`（留白镜），
-面板顶部显示分数与逐项 ✓/✗。
+**体检 `lintPlan` 17 项**，不过就自动返修：`repairBookend`（末镜回扣）、`relieveSilence`（留白镜）、
+`breakLyricDup`（一句词盖三格）、`trimLongActions`（动作 >90 字截断）、`mergeScenes`（一镜一场 → ≤10 场），
+面板顶部显示分数与逐项 ✓/✗。其中三项是结构性的：
+
+| 检查 | 卡什么 |
+|---|---|
+| `turn` | 揭示必须写在 `twist.what` 且落在全片 50%–90% |
+| `contrast` | 中段 18%–68% 必须有一处真的放松（笑/松劲），全片一直压着会麻 |
+| `logline-clean` | logline 不许剧透揭示（转述重合 >30% 即判漏） |
 
 ## 时间轴跟着歌走
 
