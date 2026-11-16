@@ -765,6 +765,9 @@ export function composeFramePrompt(plan, shot) {
     parts.push('macro close-up on the object, extremely shallow depth of field, static shot, no people in frame');
   } else {
     parts.push(beastBody ? beastCamera(shot) : cameraFragment(shot));
+    // 过肩构图（over-the-shoulder）试过，撤回了：只要提示词里同时描述"另一个人在前面"，模型就会
+    // 把那个人额外画一张全身出来，双人镜变三人镜（实测第 1 镜出现两个老周）。
+    // 真要做 OTS 得先有 composition 字段，把另一个角色从场景描述里摘掉，光加一句构图词不够。
     if (shot.beat) parts.push(`情绪：${shot.beat}`);
     // 表演指向：静帧最容易拍成"站好、看镜头"。给视线落点，并要求动作发生在半途。
     // 空镜（大远景、没有人）不要写视线——那会把模型逼出一个人来站着。
