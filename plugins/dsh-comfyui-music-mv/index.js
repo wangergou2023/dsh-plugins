@@ -24,6 +24,7 @@ import {
 } from './lib/mv.js';
 import { vocab, cameraSummary } from './lib/shotlang.js';
 import { probeFfmpeg, stitchWithTransitions, concatAudio } from './lib/ffmpeg.js';
+import { loadRefEditTemplate, buildRefEditGraph, refsForShot, refInstruction } from './lib/refedit.js';
 import { cinematicPass } from './lib/grade.js';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -613,7 +614,42 @@ async function readLocalFile(value) {
 /* ---------- 单镜头的两步：静帧 / 视频 ---------- */
 
 /** 出这一镜的静帧（Krea2）。产物落盘 + 传进 ComfyUI input，返回文件名。 */
+/** 懒加载 Qwen 参考编辑模板（workflows/qwen_frame_edit.api.json）。 */
+let refTemplateCache = null;
+async function refTemplate() {
+  if (!refTemplateCache) {
+    refTemplateCache = await loadRefEditTemplate(path.join(HERE, 'workflows', 'qwen_frame_edit.api.json'));
+  }
+  return refTemplateCache;
+}
+
 async function renderFrame(client, job, plan, shot, params) {
+  // 有定妆图就走"认人"链路：Qwen 参考编辑，角色长相全片锁死
+  const sceneText = composeFramePrompt(plan, shot);
+  const pick = params.frameMode === 't2i' ? { refs: [], labels: [] } : refsForShot(job, shot, 2);
+  if (pick.refs.length) {
+    const graph = buildRefEditGraph(await refTemplate(), {
+      refs: pick.refs,
+      prompt: refInstruction(pick.labels, sceneText),
+      aspectRatio: params.aspectRatio || '16:9 (Widescreen)',
+      megapixels: Math.min(1.6, Number(params.frameMegapixels) || 1.3),
+      steps: Math.max(12, Number(params.frameRefSteps) || 25),
+      seed: params.frameSeed,
+      prefix: `mv_frame/${job.id}_${shot.index + 1}`,
+    });
+    applyModelOverrides(graph.prompt, params.models);
+    const promptId = await client.submit(graph.prompt);
+    const entry = await client.wait(promptId, 2400000);
+    const item = firstOutputImage(entry, '461');
+    if (!item) throw new Error('参考静帧没有产出');
+    const buffer = await fetchComfyImage(client, item);
+    const stamp = Date.now().toString(36);
+    const fileName = `frame_${String(shot.index + 1).padStart(2, '0')}_${stamp}.png`;
+    const file = await saveFrame(path.join(DATA_DIR, job.id), fileName, buffer);
+    const name = await client.upload(buffer, `mvf_${job.id}_${shot.index + 1}_${stamp}.png`, 'image/png');
+    return { name, file, seed: graph.seed, promptText: sceneText, engine: 'ref', width: graph.width, height: graph.height };
+  }
+
   const built = await buildFramePrompt(plan, shot, {
     aspectRatio: params.aspectRatio || '16:9 (Widescreen)',
     megapixels: params.frameMegapixels || 8.0,
