@@ -26,8 +26,10 @@ import { vocab, cameraSummary } from './lib/shotlang.js';
 import { probeFfmpeg, stitchWithTransitions, concatAudio } from './lib/ffmpeg.js';
 import { loadRefEditTemplate, buildRefEditGraph, refsForShot, refInstruction, shotForm } from './lib/refedit.js';
 import { cinematicPass } from './lib/grade.js';
+import { buildBookHtml } from './lib/book.js';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
+const PLUGIN_DIR = HERE;
 const DATA_DIR = process.env.DSH_MUSIC_MV_DATA || path.join(HERE, '.data');
 const DEFAULT_HOST = 'http://127.0.0.1:8188';
 
@@ -1513,6 +1515,37 @@ export function apply(ctx) {
 
   /* ------------------- 路由 ------------------- */
 
+  ctx.tools.register({
+    name: 'mv_book',
+    description: '把某个已完成的任务导成「导演本」：单文件 HTML（A4 打印样式，定妆/节奏/剧本/分镜板/分镜表，图片内嵌），双击可看，Ctrl+P 出 PDF。',
+    parameters: {
+      type: 'object',
+      properties: {
+        id: { type: 'string', description: '任务 id（不填就用最近一个）' },
+        outFile: { type: 'string', description: '输出 html 路径；不填写到插件 .data/<任务id>/导演本.html' },
+      },
+    },
+    output: OUTPUT,
+    timeoutMs: 180000,
+    async execute(args) {
+      await jobStore.refresh();
+      const job = args.id ? jobStore.get(String(args.id)) : jobStore.list()[0];
+      if (!job) throw new Error('没有这个任务');
+      const html = buildBookHtml(job, { pluginDir: PLUGIN_DIR });
+      const outFile = args.outFile
+        ? path.resolve(String(args.outFile))
+        : path.join(DATA_DIR, job.id, '导演本.html');
+      await fs.mkdir(path.dirname(outFile), { recursive: true });
+      await fs.writeFile(outFile, html, 'utf8');
+      const shots = Array.isArray(job.shots) ? job.shots : [];
+      return text([
+        `导演本已生成：《${(job.plan && job.plan.title) || '未命名'}》`,
+        `文件：${outFile}（${(html.length / 1024 / 1024).toFixed(2)} MB）`,
+        `内容：${shots.length} 镜 · 静帧 ${shots.filter((s) => s.frameFile).length} 张 · ${(job.plan && job.plan.scenes && job.plan.scenes.length) || 0} 场`,
+      ]);
+    },
+  });
+
   ctx.inject(['webServer'], (webCtx) => {
     const webServer = webCtx.get('webServer');
     if (webServer === undefined) return;
@@ -1750,6 +1783,34 @@ export function apply(ctx) {
         } catch (error) {
           await jobStore.patchShot(id, index, { frameStatus: 'failed', error: friendlyError(error) });
           sendJson(response, 500, { error: 'frame_failed', message: friendlyError(error) });
+        }
+      },
+    }));
+
+    /** 导演本：浏览器里直接看 / 打印成 PDF（不加 ?download=1 就直接渲染）。 */
+    disposers.push(webServer.register({
+      kind: 'exact',
+      path: '/api/comfyui-music-mv/book',
+      handler: async (request, response) => {
+        if (request.method !== 'GET') { sendJson(response, 405, { error: 'method_not_allowed' }); return; }
+        const url = new URL(request.url || '/', 'http://localhost');
+        const id = String(url.searchParams.get('id') || '');
+        await jobStore.refresh();
+        const job = id ? jobStore.get(id) : jobStore.list()[0];
+        if (!job) { response.writeHead(404, { 'content-type': 'application/json; charset=utf-8' }); response.end(JSON.stringify({ error: 'not_found', id })); return; }
+        try {
+          const html = buildBookHtml(job, { pluginDir: PLUGIN_DIR });
+          const buffer = Buffer.from(html, 'utf8');
+          const headers = { 'content-type': 'text/html; charset=utf-8', 'content-length': buffer.length };
+          if (url.searchParams.get('download')) {
+            const name = encodeURIComponent(`《${(job.plan && job.plan.title) || job.id}》导演本.html`);
+            headers['content-disposition'] = `attachment; filename="mv-book.html"; filename*=UTF-8''${name}`;
+          }
+          response.writeHead(200, headers);
+          response.end(buffer);
+        } catch (error) {
+          response.writeHead(500, { 'content-type': 'application/json; charset=utf-8' });
+          response.end(JSON.stringify({ error: 'book_failed', message: friendlyError(error) }));
         }
       },
     }));

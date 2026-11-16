@@ -583,6 +583,10 @@ window.__ModuleLoader__.load({
               job && job.status === 'interrupted' ? h('button', { className: 'cfl-chip', style: { fontWeight: 600 }, disabled: !!busy, onClick: function () { continueRun(job.shots && job.shots.some(function (s) { return s.frame; }) ? 'videos' : 'frames'); } }, '↻ 续跑（进程重启过）') : null,
               h('button', { className: 'cfl-chip', disabled: !!busy || running, onClick: function () { startRun('all'); } }, '一键到底'),
               h('button', { className: 'cfl-chip', disabled: !job, title: '把剧本和参数存成 json', onClick: exportPlan }, '⇩ 导出方案'),
+              job ? h('button', {
+                className: 'cfl-chip', title: '把定妆、节奏、剧本、分镜板导成可打印的导演本',
+                onClick: function () { window.open('/api/comfyui-music-mv/book?id=' + encodeURIComponent(job.id), '_blank'); },
+              }, '📖 导演本') : null,
               h('button', { className: 'cfl-chip', title: '导入之前导出的方案', onClick: importPlan }, '⇧ 导入'),
               h('label', { style: { display: 'flex', alignItems: 'center', gap: '5px', ...small } },
                 h('input', { type: 'checkbox', checked: cfg.tailLink, onChange: function (e) { setCfg(function (p) { return { ...p, tailLink: e.target.checked }; }); } }),

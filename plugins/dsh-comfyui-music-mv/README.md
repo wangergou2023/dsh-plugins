@@ -99,6 +99,14 @@ LoadImage(本体/人形 定妆) ×1–2 → TextEncodeQwenImage21 → KSampler �
 
 结果写回 `job.heroes[i]`：`file/comfy` 是原形、`humanFile/humanComfy` 是前者的人形。面板上 **♻ 重出定妆**（`POST /api/comfyui-music-mv/heroes`，可只重出某一个角色 `{index:0}`）只换定妆、不动已出的静帧。
 
+## 导演本（一键出版）
+
+`mv_book` / 面板 **📖 导演本** / `GET /api/comfyui-music-mv/book?id=…` 会把一个任务导成**单文件 HTML**：A4 打印样式、图片全部内嵌，双击就能看，Ctrl+P 直接出 PDF。
+
+包含：封面（片名/时长/镜数/一句话）、主创与基调（曲风、视觉基调、角色、物件母题）、三形态定妆、节奏条（纯 SVG，块宽=时长、颜色=景别）、场次体剧本（表演/声音/唱词）、分镜板、分镜表（#/时长/景别/机位/运镜/光/动作/表演/他要/道具）。
+
+静帧原图 1–3MB，二十几张直接内嵌会做出 60MB 的 HTML，所以导出时用 ffmpeg 缩成 420–560px 的 JPEG 再内嵌（按源文件 mtime 缓存，重复导出不重转）。没装 ffmpeg 时仍能导出，只是文件会很大。
+
 ## 面板用法
 
 1. 写主题 → 调歌长/像素/比例 → **🎬 生成剧本**
