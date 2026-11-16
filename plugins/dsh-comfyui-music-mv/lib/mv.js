@@ -227,6 +227,12 @@ export function allocateRhythmTimeline(duration, meta = []) {
       weights[i] = accent * breathe;
     }
   }
+  // 说话镜短、反应镜长——必须放在节奏兜底"之后"，否则兜底曲线会把这条规则整段盖掉（实测过：
+  // 先乘 0.76 再被 flat 分支覆盖，结果有台词的镜反而最长）。
+  for (let i = 0; i < weights.length; i += 1) {
+    const m = metaWithCount[i] || {};
+    if (m.castCount >= 2) weights[i] *= m.dialogue ? 0.72 : 1.34;
+  }
   const MIN = LIMITS.shotMinSeconds;
   const MAX = LIMITS.shotMaxSeconds;
   const lens = new Array(n).fill(0);
@@ -330,6 +336,9 @@ export function normalizePlan(data, opts = {}) {
   const meta = rawShots.slice(0, count).map((s) => ({
     section: (s && (s.section || s.lyricSection)) || '',
     move: (s && (s.move || s.movement)) || '',
+    // 说话的人和听的人不该一样长：说话镜短、反应镜长——这是对话戏的呼吸
+    dialogue: Boolean(s && String(s.dialogue || '').trim()),
+    castCount: Array.isArray(s && s.cast) ? s.cast.length : 0,
   }));
   const timeline = opts.rhythm === false ? allocateTimeline(duration, count) : allocateRhythmTimeline(duration, meta);
   const storySrc = (data && data.story && typeof data.story === 'object') ? data.story : {};
