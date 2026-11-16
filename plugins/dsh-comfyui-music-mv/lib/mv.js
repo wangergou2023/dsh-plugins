@@ -232,6 +232,10 @@ export function allocateRhythmTimeline(duration, meta = []) {
   for (let i = 0; i < weights.length; i += 1) {
     const m = metaWithCount[i] || {};
     if (m.castCount >= 2) weights[i] *= m.dialogue ? 0.78 : 1.16;
+    // 空镜（没人/只有物件）在真实 MV 里往往是全片最长的一镜：观众需要喘气的地方。
+    else if (m.castCount === 0) weights[i] *= 1.22;
+    // 单人独白夹在中间，略微压一点，别让它抢过空镜。
+    else if (m.dialogue) weights[i] *= 0.94;
   }
   const MIN = LIMITS.shotMinSeconds;
   const MAX = LIMITS.shotMaxSeconds;
