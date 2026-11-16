@@ -600,8 +600,63 @@ export function breakLyricDup(plan) {
  * 本体镜里不能出现"人的手"。动作是写人形时写的，改成爪/前腿再喂给模型，
  * 否则画出来就是"一只狗 + 一只人的手"（实测第 4 格：狗爪旁边一只人手拿着怀表）。
  */
+/**
+ * 本体镜的"犬体化"改写：把手才做得出的动词换成犬能做的。
+ * 文字里写"捡起来、攥在手里"，模型就给你补一个人（实测三次都是狗头人身）；
+ * 改成"叼起来、咬住"，画面才是狗。
+ */
+export function dogifyText(text) {
+  return String(text || '')
+    .replace(/捡起/g, '叼起').replace(/捡/g, '叼')
+    .replace(/攥在手里/g, '咬在嘴里').replace(/攥/g, '咬住')
+    .replace(/握紧/g, '咬紧').replace(/握住/g, '叼住').replace(/握/g, '叼')
+    .replace(/捏着/g, '叼着').replace(/捏/g, '叼')
+    .replace(/拿在手里/g, '叼在嘴里').replace(/拿起/g, '叼起').replace(/拿/g, '叼')
+    .replace(/递过去|递给/g, '叼过去').replace(/递/g, '叼给对方')
+    .replace(/擦干净/g, '蹭干净').replace(/擦/g, '蹭')
+    .replace(/按在/g, '压在').replace(/按下/g, '压住');
+}
+
+/** 本体镜（含单角色同框）的犬体化返修，就地改 action/performance。 */
+export function dogifyBeastShots(plan) {
+  const shots = (plan.shots || []).map((s) => {
+    const form = normalizeForm(s.form);
+    const solo = (Array.isArray(s.cast) ? s.cast.length : 0) <= 1;
+    const beastBody = form === 'beast' || (form === 'mixed' && solo);
+    if (!beastBody) return s;
+    return { ...s, action: dogifyText(s.action), performance: dogifyText(s.performance) };
+  });
+  return { ...plan, shots };
+}
+
+/**
+ * 本体镜的镜头语言：把人像景别换成动物景别。
+ * "waist-up to full body, character" 这种写法会把模型推向"人形立姿"，
+ * 骨头/犬的画面就被画成一个穿衣服的狗头人（实测第 8 格）。
+ */
+export function beastCamera(shot) {
+  const size = String((shot && shot.size) || 'medium');
+  const map = {
+    extreme_wide: 'extreme wide shot, tiny animal figure in a vast landscape, deep focus',
+    wide: 'wide shot, full body of the animal, whole environment visible',
+    medium: 'medium shot, animal standing on four legs, full body visible, tail and paws in frame',
+    close: 'close-up on the animal head and shoulders, fur texture visible',
+    extreme_close: 'extreme close-up on the animal eyes and muzzle, razor focus',
+  };
+  const parts = [map[size] || map.medium];
+  const e = String((shot && shot.elevation) || 'eye');
+  parts.push({
+    worm: "extreme low-angle worm's eye view, camera near the ground",
+    low: 'low angle, camera near the ground pointing slightly up',
+    eye: 'camera at the animal eye level',
+    high: 'high angle looking down at the animal',
+  }[e] || 'camera at the animal eye level');
+  parts.push('four-legged animal anatomy, not standing upright, no human clothing, no human hands');
+  return parts.join(', ');
+}
+
 export function beastAction(action) {
-  return String(action || '')
+  return dogifyText(String(action || ''))
     .replace(/右手/g, '右前爪').replace(/左手/g, '左前爪')
     .replace(/双手/g, '两只前爪').replace(/手掌/g, '爪垫')
     .replace(/手背/g, '前爪背面').replace(/手腕/g, '前腿').replace(/胳膊/g, '前腿')
@@ -659,7 +714,8 @@ export function composeFramePrompt(plan, shot) {
       // 只有一个角色：这一格是"本体 + 人的痕迹"，不是人和兽并排，更不能长成狗头人。
       parts.push([
         `画面主体是${a.name}的本体：${aBeast || '动物或骨架'}，`,
-        '画面边缘可以出现一只人手、或一个看不清脸的人影，但绝不能出现狗头人身这种融合体',
+        '画面里不要出现手、不要出现人的脸；如果需要人的痕迹，只用投在他身上的影子、或画外一截模糊的裤脚',
+        '这一格绝对不能出现狗头人身、也不能出现半人半狗的融合生物',
       ].join(''));
     }
   } else if (cast.length) {
@@ -683,7 +739,9 @@ export function composeFramePrompt(plan, shot) {
   }
   if (!insertShot && shot.scene) parts.push(shot.scene);
   if (!insertShot && shot.time) parts.push(shot.time);
-  if (!insertShot && shot.action) parts.push(beastShot ? beastAction(shot.action) : shot.action);
+  // 本体镜、以及"单个角色的同框镜"，动作里的人体词也要换成犬/骨体词，否则文字里一出现"手"，模型就补一个人。
+  const beastBody = beastShot || (mixedShot && cast.length <= 1);
+  if (!insertShot && shot.action) parts.push(beastBody ? beastAction(shot.action) : shot.action);
   // 定格：动作是「一段时间」，静帧只能截「一刻」。变形这类过程镜必须另外指定截在哪一刻，
   // 否则模型只能猜，猜出来就是「已经变完」或者「完全没变」。
   if (shot.stillFrame) parts.push(`这一格定格在：${shot.stillFrame}`);
@@ -692,7 +750,7 @@ export function composeFramePrompt(plan, shot) {
   if (insertShot) {
     parts.push('macro close-up on the object, extremely shallow depth of field, static shot, no people in frame');
   } else {
-    parts.push(cameraFragment(shot));
+    parts.push(beastBody ? beastCamera(shot) : cameraFragment(shot));
     if (shot.beat) parts.push(`情绪：${shot.beat}`);
     // 表演指向：静帧最容易拍成"站好、看镜头"。给视线落点，并要求动作发生在半途。
     // 空镜（大远景、没有人）不要写视线——那会把模型逼出一个人来站着。
