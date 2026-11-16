@@ -159,6 +159,16 @@ export function allocateRhythmTimeline(duration, meta = []) {
       weights[i] = accent * breathe;
     }
   }
+  // 权重几乎一样（模型把每段都写成同一类）→ 用内置节奏曲线兜底，别等到体检再退回
+  const wMax = Math.max(...weights);
+  const wMin = Math.min(...weights);
+  if (weights.length > 2 && wMax / Math.max(1e-6, wMin) < 1.6) {
+    for (let i = 0; i < weights.length; i += 1) {
+      const accent = i % 4 === 0 ? 1.35 : (i % 4 === 2 ? 0.72 : 1);
+      const breathe = 0.85 + 0.3 * ((i * 7) % 5) / 4;
+      weights[i] = accent * breathe;
+    }
+  }
   const MIN = LIMITS.shotMinSeconds;
   const MAX = LIMITS.shotMaxSeconds;
   const lens = new Array(n).fill(0);
@@ -200,6 +210,20 @@ export function allocateRhythmTimeline(duration, meta = []) {
 }
 
 /* --------------------------- 分镜表 --------------------------- */
+
+/**
+ * 这一镜的形态。剧本层写死（beast/human/trans/mixed），出图时不再猜。
+ * 猜的代价实测过：狗被画成人、骨被画成裙子上的印花。
+ */
+export function normalizeForm(value) {
+  const raw = String(value || '').trim().toLowerCase();
+  if (!raw) return '';
+  if (/trans|过渡|变形|正在变|半骨|半人半|变到一半/.test(raw)) return 'trans';
+  if (/beast|原形|本体|兽形|狗形|骨形|原型/.test(raw)) return 'beast';
+  if (/mixed|同框|both|并置/.test(raw)) return 'mixed';
+  if (/human|人形|人物|人身/.test(raw)) return 'human';
+  return '';
+}
 
 /** 从模型输出里抠出 JSON（容忍代码块、前后废话）。 */
 export function parsePlanJson(raw) {
@@ -278,6 +302,9 @@ export function normalizePlan(data, opts = {}) {
       prop: text(src.prop || src.object || src.item),
       // 定格：动作是一段时间，静帧只截一刻（变形镜必须写，否则模型只能猜）
       stillFrame: text(src.stillFrame || src.freeze || src.freezeAt || src.frameMoment),
+      // 形态由剧本决定：beast 只看见本体 / human 只看见人形 / trans 正在变 / mixed 同框。
+      // 不写就留空，出图时再按动作文字兜底猜（老 plan 兼容）。
+      form: normalizeForm(src.form || src.形态 || src.mode),
       // 这一镜出的是人形还是原形（狗 / 骷髅）——决定用哪套外形喂图
       form: text(src.form || src.shape || src.state),
       dialogue: text(src.dialogue),
@@ -574,11 +601,17 @@ export function composeFramePrompt(plan, shot) {
   const cast = castOf(plan, shot);
   // 原形 / 人形决定喂哪套外形：不然"狗叼骨头"会被画成"男人抱女人"
   const probe = `${shot.form || ''} ${shot.action || ''} ${shot.label || ''}`;
+  // 剧本里写死的 form 就是导演决定，不要再从文字里猜。
+  const declaredForm = String(shot.form || '').trim().toLowerCase();
   const animalShot = /小狗|黑狗|白狗|狗形|犬|四爪|前爪|尾巴|摇尾/.test(probe);
   const boneShot = /骨架|骨爪|骨颅|白骨原形|骨节|骨指|变回骨/.test(probe);
-  const humanShot = /人形|少女|少年|男人|女人|男子|女子|少年|她|他/.test(probe);
-  const beastShot = (animalShot || boneShot) && !humanShot;
-  const mixedShot = (animalShot || boneShot) && humanShot;
+  const humanShot = /人形|少女|少年|男人|女人|男子|女子|她的脸|他的脸|她|他/.test(probe);
+  const beastShot = declaredForm === 'beast' ? true
+    : declaredForm === 'human' ? false
+      : ((animalShot || boneShot) && !humanShot);
+  const mixedShot = declaredForm === 'mixed' ? true
+    : declaredForm === 'beast' || declaredForm === 'human' ? false
+      : ((animalShot || boneShot) && humanShot);
   // 插入镜（insert）：揭示镜或纯物件镜，主体是"东西"不是"人"。
   // 这类镜头如果把人物外形写在最前面，模型一定交回来一张人脸特写——
   // 所以人物降级成"远处一个模糊人影"，物件提到最前面。
@@ -1195,6 +1228,28 @@ export function lintPlan(plan) {
   const lyricOk = lyricLines.length >= 4 && lyricText.length >= 24;
   push('lyrics', '有完整的歌词（≥4 行）', lyricOk,
     lyricOk ? `${lyricLines.length} 行 / ${lyricText.length} 字` : '没有歌词：出歌会直接报 lyrics_required，整条链断在第一步');
+
+  // 20. 形态：非人角色必须在画面上"现原形"至少两格，否则观众从头到尾只看见两个人。
+  //     这是实测出来的硬伤——21 格全是人形，狗和骨架一次都没出现在画面里。
+  const forms = shots.map((s) => normalizeForm(s.form));
+  const beastCount = forms.filter((f) => f === 'beast').length;
+  const humanCount = forms.filter((f) => f === 'human').length;
+  const transCount = forms.filter((f) => f === 'trans').length;
+  const mixedCount = forms.filter((f) => f === 'mixed').length;
+  const undeclared = forms.filter((f) => !f).length;
+  let run = 1;
+  let longestRun = 1;
+  let runForm = forms[0] || '';
+  for (let i = 1; i < forms.length; i += 1) {
+    if (forms[i] && forms[i] === runForm) run += 1;
+    else { runForm = forms[i]; run = 1; }
+    longestRun = Math.max(longestRun, run);
+  }
+  const formsOk = undeclared === 0 && (beastCount + transCount + mixedCount) >= 2 && humanCount >= 2 && longestRun <= 2;
+  push('forms', '本体与人形在画面上交替（每镜写死 form）', formsOk,
+    undeclared
+      ? `有 ${undeclared} 镜没写 form——出图时只能瞎猜，猜出来就是"狗被画成人"`
+      : `本体 ${beastCount} / 人形 ${humanCount} / 过渡 ${transCount} / 同框 ${mixedCount}，最长连续同形态 ${longestRun} 镜`);
 
   const passed = checks.filter((c) => c.ok).length;
   const total = checks.length || 1;

@@ -76,6 +76,10 @@ export function buildRefEditGraph(template, opts = {}) {
 
 /** 这一镜是"本体"还是"人形"：交给喂哪张定妆图。 */
 export function shotForm(shot) {
+  // 剧本层写死的 form 优先级最高：这一格观众该看见狗、还是人、还是正在变，是导演决定的，
+  // 不该在出图时从动作文字里猜（猜错过太多次：狗被画成人、骨被画成裙子印花）。
+  const declared = String((shot && (shot.form || shot.形态 || shot.mode)) || '').trim().toLowerCase();
+  if (declared === 'beast' || declared === 'human' || declared === 'trans' || declared === 'mixed') return declared;
   const t = `${(shot && shot.action) || ''} ${(shot && shot.performance) || ''} ${(shot && shot.dialogue) || ''}`;
   const beast = /小狗|细犬|四爪|前爪|爪子|爪|尾巴|摇尾|犬|狗形|狗/.test(t);
   const human = /人形|少女|少年|男人|女人|男子|女子|她的脸|他的脸|脸上|眼神/.test(t);
