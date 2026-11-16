@@ -199,6 +199,8 @@ h3 { font-size:11pt; margin:14pt 0 4pt; font-family:"PingFang SC","Microsoft YaH
 .meta { font-family:"PingFang SC","Microsoft YaHei",sans-serif; font-size:9pt; color:#5c5a55; }
 .cover { display:flex; flex-direction:column; justify-content:space-between; }
 .cover .bottom { border-top:1px solid #d8d3c7; padding-top:8pt; }
+.poster { margin:12pt 0 6pt; }
+.poster img { width:100%; border-radius:2pt; display:block; }
 blockquote { margin:6pt 0; padding:6pt 10pt; background:#faf8f3; border-left:2px solid #c9c4b8; font-size:9.6pt; color:#33322e; }
 blockquote b { font-family:"PingFang SC","Microsoft YaHei",sans-serif; font-size:8.6pt; letter-spacing:1pt; color:#7a756b; }
 table { width:100%; border-collapse:collapse; font-family:"PingFang SC","Microsoft YaHei",sans-serif; font-size:8.2pt; }
@@ -230,6 +232,8 @@ export function buildBookHtml(job, options = {}) {
   const title = plan.title || '未命名';
   const total = shots.reduce((sum, s) => sum + Number(s.seconds || 0), 0);
   const logline = (plan.story && (plan.story.logline || plan.story.story)) || plan.logline || '';
+  // 封面用第 1 镜的静帧当主视觉：一本没有图的导演本翻开来像报价单。
+  const poster = thumbUri(shotFrame(shots[0]), 1200, ctx);
   return `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><title>《${esc(title)}》导演本</title><style>${CSS}</style></head><body>
 <section class="page cover">
   <div>
@@ -237,6 +241,7 @@ export function buildBookHtml(job, options = {}) {
     <h1>${esc(title)}</h1>
     <div class="meta" style="margin-top:2pt">${total.toFixed(1)} 秒 · ${shots.length} 镜 · 静帧 ${shots.filter((s) => shotFrame(s)).length}/${shots.length} 已出</div>
   </div>
+  ${poster ? `<div class="poster"><img src="${poster}"></div>` : ''}
   <div><p class="lede">${esc(logline).replace(/\n/g, '<br>')}</p></div>
   <div class="bottom meta">任务 ${esc(job && job.id || '')} · 生成于 ${new Date().toLocaleString('zh-CN')}</div>
 </section>

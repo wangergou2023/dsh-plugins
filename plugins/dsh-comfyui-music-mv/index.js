@@ -937,7 +937,9 @@ async function renderHero(client, job, plan, character, index, params) {
     const buffer = await fetchComfyImage(client, item);
     await fs.mkdir(path.join(DATA_DIR, job.id), { recursive: true });
     const stamp = Date.now().toString(36);
-    const isHuman = spec.form === 'human';
+    const hasBeast = specs.some((x) => x.form === 'beast');
+    // 纯人类角色（没有本体形态）只出一张图，那张图就是人形——不标成"本体"。
+    const isHuman = spec.form === 'human' || (!hasBeast && spec.form !== 'beast');
     const isTrans = spec.form === 'trans';
     const suffix = isHuman ? '_human' : isTrans ? '_trans' : '';
     const heroFile = path.join(DATA_DIR, job.id, `hero_${index + 1}${suffix}_${stamp}.png`);
