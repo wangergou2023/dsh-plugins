@@ -225,6 +225,19 @@ export function normalizeForm(value) {
   return '';
 }
 
+/**
+ * 构图：单人 / 双人并置 / 过肩。
+ * 过肩不是"加一句话"能做的——必须同时把另一个角色从场景动作里摘出来，
+ * 否则模型会把他额外出成一个完整的人（实测出现过两个老周）。
+ */
+export function normalizeComposition(value, castCount = 0) {
+  const raw = String(value || '').trim().toLowerCase();
+  if (/ots|过肩|over.?shoulder/.test(raw)) return 'ots';
+  if (/two|双人|并置|对切/.test(raw)) return 'two';
+  if (/single|单人|独镜/.test(raw)) return 'single';
+  return '';
+}
+
 /** 从模型输出里抠出 JSON（容忍代码块、前后废话）。 */
 export function parsePlanJson(raw) {
   let text = String(raw || '').trim();
@@ -305,6 +318,7 @@ export function normalizePlan(data, opts = {}) {
       // 形态由剧本决定：beast 只看见本体 / human 只看见人形 / trans 正在变 / mixed 同框。
       // 不写就留空，出图时再按动作文字兜底猜（老 plan 兼容）。
       form: normalizeForm(src.form || src.形态 || src.mode),
+      composition: normalizeComposition(src.composition || src.shotType || src.构图),
       // 这一镜出的是人形还是原形（狗 / 骷髅）——决定用哪套外形喂图
       form: text(src.form || src.shape || src.state),
       dialogue: text(src.dialogue),
@@ -711,6 +725,24 @@ export function composeFramePrompt(plan, shot) {
     parts.push(`画面主体是物件，不是人：${subject}`);
     const who = cast.length ? cast.map((c) => c.name).join('和') : '';
     parts.push(`人物的脸不在画面里${who ? `（${who}最多是焦外的一截手臂或一个模糊的背影）` : ''}，镜头贴着这件东西拍，看得清材质、磨损和灰`);
+  } else if (cast.length >= 2 && String(shot.composition || '') === 'ots') {
+    // 过肩：只拍主角一个人，对方只以"边缘的虚焦肩膀/后脑"出现。
+    // 关键是不要给对方的正脸外形——给了外形，模型就会把他额外出成一个完整的人。
+    const a = cast[0];
+    const b = cast[1];
+    if (shot.scene) parts.push(shot.scene);
+    if (shot.time) parts.push(shot.time);
+    parts.push(`主角是${a.name}（${String(a.look || '').split(/[，。；]/).slice(0, 2).join('，')}），在焦内，脸部清楚`);
+    parts.push(`画面边缘只有${b.name}的肩膀与后脑剪影，虚焦，不露脸、不做动作、不是第二个人`);
+    // 动作里只要出现对方的名字，模型就会把对方整只画出来，过肩立刻变三人镜。
+    // 所以过肩镜只保留"不含对方名字"的句子，剩下的交给主角自己的表演。
+    const cleanAction = String(shot.action || '')
+      .split(/[；;。]/)
+      .filter((sentence) => sentence.trim() && !sentence.includes(b.name))
+      .join('；');
+    const beatText = cleanAction || String(shot.performance || '');
+    if (beatText) parts.push(`${beastShot ? beastAction(beatText) : beatText}（只拍主角这一侧的动作）`);
+    parts.push('画面里只有两个人：一个在焦内，一个只露出局部剪影；不要第三个人、不要在画面正中并排');
   } else if (cast.length && mixedShot) {
     // 同框镜必须点名"两个分开的主体"。只把两套外形连在一句话里，模型会把它们揉成一个
     // 狗头人身的东西（实测第 8 格）。
@@ -751,11 +783,13 @@ export function composeFramePrompt(plan, shot) {
   } else if (plan.character) {
     parts.push(plan.character.replace(/\s+/g, ' ').trim());
   }
-  if (!insertShot && shot.scene) parts.push(shot.scene);
-  if (!insertShot && shot.time) parts.push(shot.time);
+  // 过肩镜已经在上面写过场景/时间/动作了，这里不能再写一遍——重复描述会让模型把对方再画一次。
+  const otsShot = !insertShot && cast.length >= 2 && String(shot.composition || '') === 'ots';
+  if (!insertShot && !otsShot && shot.scene) parts.push(shot.scene);
+  if (!insertShot && !otsShot && shot.time) parts.push(shot.time);
   // 本体镜、以及"单个角色的同框镜"，动作里的人体词也要换成犬/骨体词，否则文字里一出现"手"，模型就补一个人。
   const beastBody = beastShot || (mixedShot && cast.length <= 1);
-  if (!insertShot && shot.action) parts.push(beastBody ? beastAction(shot.action) : shot.action);
+  if (!insertShot && !otsShot && shot.action) parts.push(beastBody ? beastAction(shot.action) : shot.action);
   // 定格：动作是「一段时间」，静帧只能截「一刻」。变形这类过程镜必须另外指定截在哪一刻，
   // 否则模型只能猜，猜出来就是「已经变完」或者「完全没变」。
   if (shot.stillFrame) parts.push(`这一格定格在：${shot.stillFrame}`);
@@ -1365,6 +1399,14 @@ export function lintPlan(plan) {
     undeclared
       ? `有 ${undeclared} 镜没写 form——出图时只能瞎猜，猜出来就是"狗被画成人"`
       : `本体 ${beastCount} / 人形 ${humanCount} / 过渡 ${transCount} / 同框 ${mixedCount}，最长连续同形态 ${longestRun} 镜`);
+
+  // 过肩：双人对话镜最省事的拍法是两人并排，但那是业余感的来源。
+  const multiCast = (plan.shots || []).filter((s) => (s.cast || []).length >= 2);
+  const otsCount = (plan.shots || []).filter((s) => String(s.composition || '') === 'ots').length;
+  push('composition', '双人镜至少有一处过肩构图', multiCast.length === 0 || otsCount >= 1,
+    multiCast.length === 0
+      ? '全片没有双人镜，不适用'
+      : (otsCount >= 1 ? `双人镜 ${multiCast.length} 处，其中过肩 ${otsCount} 处` : '双人镜全都写成并排站立——两人并排看镜头是最业余的构图'));
 
   const passed = checks.filter((c) => c.ok).length;
   const total = checks.length || 1;
