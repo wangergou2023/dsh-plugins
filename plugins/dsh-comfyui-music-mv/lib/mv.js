@@ -419,6 +419,24 @@ export function eyelineFor(shot, castCount = 0) {
   return '看着手里的东西';
 }
 
+/** 同一句唱词铺满三格时，把多出来的那几格换成半句：歌词重复是歌的事，画面不能靠一句话过三关。 */
+export function breakLyricDup(plan) {
+  const shots = Array.isArray(plan && plan.shots) ? plan.shots : [];
+  const seen = new Map();
+  for (const s of shots) {
+    const line = String(s.dialogue || '').replace(/\s/g, '').trim();
+    if (!line) continue;
+    const n = (seen.get(line) || 0) + 1;
+    seen.set(line, n);
+    if (n <= 2) continue;
+    const phrases = line.split(/[，,、；;。]/).filter(Boolean);
+    let alt = '';
+    if (phrases.length >= 2) alt = phrases[(n - 3) % phrases.length];
+    else if (line.length >= 4) alt = n % 2 === 1 ? line.slice(0, Math.ceil(line.length / 2)) : line.slice(Math.floor(line.length / 2));
+    if (alt && alt !== line) s.dialogue = alt;  }
+  return plan;
+}
+
 export function composeFramePrompt(plan, shot) {
   const parts = [];
   const cast = castOf(plan, shot);
@@ -909,6 +927,18 @@ export function lintPlan(plan) {
   const distinct = new Set(lens.map((v) => v.toFixed(1))).size;
   push('rhythm', '镜头有长有短（跟歌走）', ratio >= 1.5 && distinct >= 3,
     `${shortest.toFixed(1)}–${longest.toFixed(1)} 秒，长短比 ${ratio.toFixed(1)}，${distinct} 种长度`);
+
+  // 13. 唱词不能一句话盖三格：同一句最多出现在 2 个镜头上
+  const lyricCount = new Map();
+  for (const s of shots) {
+    const k = String(s.dialogue || '').replace(/\s/g, '').trim();
+    if (k) lyricCount.set(k, (lyricCount.get(k) || 0) + 1);
+  }
+  const dupes = [...lyricCount.entries()].filter(([, n]) => n > 2);
+  push('lyric-dup', '一句唱词最多用两格', dupes.length === 0,
+    dupes.length
+      ? dupes.map(([k, n]) => `「${k.slice(0, 8)}」×${n}`).join('　')
+      : `最多重复 ${Math.max(0, ...lyricCount.values())} 次`);
 
   const passed = checks.filter((c) => c.ok).length;
   const total = checks.length || 1;

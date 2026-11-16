@@ -1,4 +1,4 @@
-/**
+﻿/**
  * dsh-comfyui-music-mv —— 音乐 MV 生成插件。
  *
  * 一条链：出歌（YuE2）→ 主角定妆图（Krea2）→ 每镜头 5–15s 视频（MiniMax H3）
@@ -20,7 +20,7 @@ import {
   LIMITS, audioDuration, buildFramePrompt, buildShotVideoPrompt, buildTailFramePrompt,
   buildSliceAudioPrompt, buildStitchPrompt, fetchVideo, fetchComfyImage, fetchComfyAudio,
   firstOutputImage, saveVideo, saveFrame, normalizePlan, parsePlanJson, suggestShotCount,
-  charactersOf, castOf, lintPlan, segmentLyrics, composeFramePrompt, splitLook, extendSilentBeat,
+  charactersOf, castOf, lintPlan, segmentLyrics, composeFramePrompt, splitLook, extendSilentBeat, breakLyricDup,
 } from './lib/mv.js';
 import { vocab, cameraSummary } from './lib/shotlang.js';
 import { probeFfmpeg, stitchWithTransitions, concatAudio } from './lib/ffmpeg.js';
@@ -555,7 +555,7 @@ async function generatePlan(ctx, params) {
   if (shotCount <= 10) {
     const { text: raw, model } = await llmText(ctx, planSystemPrompt(shotCount, duration), userLines.join('\n'), { maxTokens: 6000 });
     const data = parsePlanJson(raw);
-    const plan = await repairBookend(ctx, relieveSilence(extendSilentBeat(normalizePlan(data, { duration, shotCount }))));
+    const plan = await repairBookend(ctx, relieveSilence(breakLyricDup(extendSilentBeat(normalizePlan(data, { duration, shotCount })))));
     return { plan, model, raw, lint: lintPlan(plan) };
   }
 
@@ -589,7 +589,7 @@ async function generatePlan(ctx, params) {
     if (Array.isArray(part && part.shots)) shots.push(...part.shots);
   }
   if (!shots.length) throw new Error('分镜生成失败：模型返回里没有 shots');
-  const plan = await repairBookend(ctx, relieveSilence(extendSilentBeat(normalizePlan({ ...head, shots }, { duration, shotCount }))));
+  const plan = await repairBookend(ctx, relieveSilence(breakLyricDup(extendSilentBeat(normalizePlan({ ...head, shots }, { duration, shotCount })))));
   return { plan, model, raw: rawHead, lint: lintPlan(plan) };
 }
 
@@ -1982,4 +1982,5 @@ export function apply(ctx) {
     for (const dispose of disposers) dispose();
   }, 'music-mv tools');
 }
+
 
