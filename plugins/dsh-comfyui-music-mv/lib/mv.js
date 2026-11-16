@@ -185,6 +185,8 @@ export function normalizePlan(data, opts = {}) {
       performance: text(src.performance || src.microAction || src.acting),
       objective: text(src.objective || src.want),
       prop: text(src.prop || src.object || src.item),
+      // 这一镜出的是人形还是原形（狗 / 骷髅）——决定用哪套外形喂图
+      form: text(src.form || src.shape || src.state),
       dialogue: text(src.dialogue),
       cast: Array.isArray(src.cast)
         ? src.cast.map((x) => String(x || '').trim()).filter(Boolean)
@@ -219,6 +221,8 @@ export function normalizePlan(data, opts = {}) {
         .map((c) => ({
           name: String((c && (c.name || c.role)) || '').trim(),
           look: String((c && (c.look || c.description || c.appearance)) || '').trim(),
+          // 原形外形（狗 / 骷髅）：只在这一镜是原形时才喂进画面提示词
+          beast: String((c && (c.beast || c.original || c.creature)) || '').trim(),
         }))
         .filter((c) => c.name || c.look)
       : [],
@@ -264,11 +268,29 @@ export function normalizePlan(data, opts = {}) {
 
 /* --------------------------- 角色 --------------------------- */
 
+/**
+ * 一个角色的外形里往往同时写了人形和原形（「中华细犬…幻化人形时为20岁少年…」）。
+ * 这里按「幻化人形时」这类词切开，出图时只喂其中一套，免得把狗画成少年。
+ */
+export function splitLook(look) {
+  const raw = String(look || '').trim();
+  if (!raw) return { beast: '', human: '' };
+  const m = raw.match(/幻化人形时|化为人形时|化作人形时|人形时|人形形态|变作人形时/);
+  if (!m || m.index === undefined) return { beast: '', human: raw };
+  const beast = raw.slice(0, m.index).replace(/[，,、；;\s]+$/, '').replace(/^(原形[:：]?)/, '').trim();
+  const human = raw.slice(m.index + m[0].length).replace(/^[为是:：]/, '').trim();
+  return { beast, human: human || raw };
+}
+
 /** 全片角色表：新的 characters 数组优先，旧的单 character 字段兜底。 */
 export function charactersOf(plan) {
   const list = Array.isArray(plan && plan.characters) ? plan.characters : [];
   const clean = list
-    .map((c) => ({ name: String((c && c.name) || '').trim(), look: String((c && (c.look || c.description)) || '').trim() }))
+    .map((c) => ({
+      name: String((c && c.name) || '').trim(),
+      look: String((c && (c.look || c.description)) || '').trim(),
+      beast: String((c && (c.beast || c.original)) || '').trim(),
+    }))
     .filter((c) => c.name || c.look);
   if (clean.length) return clean;
   if (plan && plan.character) return [{ name: '主角', look: String(plan.character).trim() }];
@@ -293,21 +315,48 @@ export function castOf(plan, shot) {
 export function composeFramePrompt(plan, shot) {
   const parts = [];
   const cast = castOf(plan, shot);
+  // 原形 / 人形决定喂哪套外形：不然"狗叼骨头"会被画成"男人抱女人"
+  const probe = `${shot.form || ''} ${shot.action || ''} ${shot.label || ''}`;
+  const animalShot = /小狗|黑狗|白狗|狗形|犬|四爪|前爪|尾巴|摇尾/.test(probe);
+  const boneShot = /骨架|骨爪|骨颅|白骨原形|骨节|骨指|变回骨/.test(probe);
+  const humanShot = /人形|少女|少年|男人|女人|男子|女子|少年|她|他/.test(probe);
+  const beastShot = (animalShot || boneShot) && !humanShot;
+  const mixedShot = (animalShot || boneShot) && humanShot;
   if (cast.length) {
-    parts.push(cast.map((c) => (c.look ? `${c.name}（${c.look}）` : c.name)).join('；'));
+    parts.push(cast.map((c) => {
+      const forms = splitLook(c.look);
+      const own = String(c.beast || '').trim();
+      let look;
+      if (mixedShot) {
+        // 同一镜里人和原形都在（例如"少女摇铃，狗坐在脚边"）——两套外形都给
+        const b = own || forms.beast;
+        look = b ? `人形：${forms.human}／原形：${b}` : c.look;
+      } else if (beastShot) {
+        look = own || forms.beast || c.look;
+      } else {
+        look = forms.human || c.look;
+      }
+      return look ? `${c.name}（${look}）` : c.name;
+    }).join('；'));
   } else if (plan.character) {
     parts.push(plan.character.replace(/\s+/g, ' ').trim());
   }
   if (shot.scene) parts.push(shot.scene);
   if (shot.time) parts.push(shot.time);
   if (shot.action) parts.push(shot.action);
-  if (shot.prop) parts.push(`画面里出现${shot.prop}`);
+  // 物件点名：动作里没写到它时补一句，保证它真的进画面（写到了就不重复）
+  if (shot.prop && !String(shot.action || '').includes(shot.prop)) parts.push(`画面里出现${shot.prop}`);
   parts.push(cameraFragment(shot));
   if (shot.beat) parts.push(`情绪：${shot.beat}`);
   // 只喂视觉基调；曲风是给 YuE2 的，塞进画面提示词只会把画面带偏
   if (plan.look) parts.push(plan.look);
   parts.push('电影剧照，人物与场景细节清晰，不要文字、不要水印');
-  return parts.filter(Boolean).join('。');
+  // 去重标点：每一段自己带句号时不要拼成「。。」
+  return parts
+    .filter(Boolean)
+    .map((p) => String(p).trim().replace(/[。，、；;,.]+$/, ''))
+    .filter(Boolean)
+    .join('。');
 }
 
 /** 生成这一镜的静帧图（Krea2）。 */
@@ -680,6 +729,11 @@ export function lintPlan(plan) {
   let gap = 0;
   for (let i = 1; i < shots.length; i += 1) if (Math.abs(shots[i].start - shots[i - 1].end) > 0.01) gap += 1;
   push('timeline', '时间轴连续', gap === 0, gap ? `${gap} 处断裂` : `${shots.length} 镜无空洞`);
+
+  // 11. 全片至少留一镜不说话：让表演自己说完
+  const silent = shots.filter((s) => !String(s.dialogue || '').trim() && (s.end - s.start) >= 8);
+  push('silence', '有一镜不说话', silent.length >= 1,
+    silent.length ? `第 ${silent.map((s) => s.index + 1).join('、')} 镜不说话，只有动作` : '每一镜都在唱，没有留给表演的空白');
 
   const passed = checks.filter((c) => c.ok).length;
   const total = checks.length || 1;

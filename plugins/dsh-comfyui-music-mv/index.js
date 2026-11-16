@@ -289,7 +289,7 @@ function planSystemPrompt(shotCount, duration) {
     '  }],',
     '  "style": "曲风（英文更稳）：流派、乐器、人声、情绪、速度",',
     '  "look": "视觉基调一句话，只写画面：胶片感/数字感、调色、镜头类型、光线基调",',
-    '  "characters": [{ "name": "角色名（短，2-4 字）", "look": "外形一句话：年龄性别、发型发色、五官特征、服装/铠甲/配饰" }],',
+    '  "characters": [{ "name": "角色名（短，2-4 字）", "look": "人形外形一句话：年龄性别、发型发色、五官特征、服装/铠甲/配饰", "beast": "原形外形一句话（不是人形的角色可留空）：例如一条黑背中华田园犬，立耳，尾尖白" }],',
     '  "props": [{ "name": "物件名（2-4 字）", "meaning": "它在这一支片子里怎么变意思：开场是…，中间变成…，最后一镜成了…" }],',
     '  "lyrics": "完整歌词，用 [Verse] [Chorus] [Bridge] 标记段落，每句一行",',
     '  "shots": [{',
@@ -320,7 +320,7 @@ function planSystemPrompt(shotCount, duration) {
     '3. 分镜必须服务故事：镜头顺序就是情绪推进顺序；主角从开头到结尾要有变化。',
     '4. 景别必须有节奏地变化，不要连着三镜都是中景；运镜一镜只用一种。',
     '5. action 只写画面：人物动作、表情、与环境的关系。绝对不能写歌词、字幕、文字、水印。',
-    '6. dialogue 必须填：从你写的 lyrics 里原样摘一句当这一镜对口型唱的词（纯环境空镜才可以留空）。',
+    '6. dialogue 必须填：从你写的 lyrics 里原样摘一句当这一镜对口型唱的词。但全片必须且只能有一镜留空（见规则 19）。',
     '7. characters 必须有 1–3 个角色，每个都要写清外形；cast 只填这一镜真正出镜的人，别漏也别多。',
     '8. 主角始终是同一个人（脸、发型、服装不变），可以换环境、换景别、换机位；多角色同框时各自外形不能混。',
     '9. 不要出现「四视图」「多视角」「分屏」「拼图」这类排版词。',
@@ -333,6 +333,7 @@ function planSystemPrompt(shotCount, duration) {
     '16. props 必须有 3–5 个，是有实体的东西（指骨、红绳、灯、硬币），不许写"回忆""命运"这类抽象词。',
     '17. 每个 prop 至少要被 2 个镜头真正用到（拿、放、藏、舔、递），最后一镜必须回到 props 里的第一个物件。',
     '18. 每镜的 prop 只能选一个，并且必须真的出现在 action 里。',
+    '19. 全片必须且只能有一镜 dialogue 留空字符串（放在全片 60%–80% 的位置），那一镜只靠动作和声音说完，表演密度要最高。',
     '',
     '故事规则（这条不过，画面再美也是垃圾）：',
     'A. 必须有一个「转折点」：观众在前半段以为是这件事，后半段发现是另一件事。用一句话能说清，不靠旁白解释。',
@@ -491,6 +492,33 @@ async function repairBookend(ctx, plan) {
   }
 }
 
+/**
+ * 体检里「有一镜不说话」不过时，把 60%–80% 位置最长的那一镜台词抽掉。
+ * 抽台词不破坏结构，但能让表演自己说话——这是最便宜的一处硬修。
+ */
+function relieveSilence(plan) {
+  try {
+    const lint = lintPlan(plan);
+    const check = lint.checks.find((c) => c.id === 'silence');
+    if (!check || check.ok) return plan;
+    const shots = plan.shots || [];
+    if (shots.length < 3) return plan;
+    const from = Math.floor(shots.length * 0.55);
+    const to = Math.max(from + 1, Math.ceil(shots.length * 0.85));
+    let best = null;
+    for (let i = from; i < to; i += 1) {
+      const s = shots[i];
+      if (!String(s.dialogue || '').trim()) continue;
+      if (s.end - s.start < 8) continue;
+      if (!best || (s.end - s.start) > (best.end - best.start)) best = s;
+    }
+    if (!best) best = shots[Math.min(shots.length - 1, Math.floor(shots.length * 0.7))];
+    return { ...plan, shots: shots.map((s) => (s === best ? { ...s, dialogue: '' } : s)) };
+  } catch {
+    return plan;
+  }
+}
+
 async function generatePlan(ctx, params) {
   const duration = Math.min(LIMITS.songMaxSeconds, Math.max(LIMITS.songMinSeconds, Number(params.duration) || 60));
   const shotCount = Math.max(1, Math.min(LIMITS.maxShots, Number(params.shotCount) || suggestShotCount(duration)));
@@ -508,7 +536,7 @@ async function generatePlan(ctx, params) {
   if (shotCount <= 10) {
     const { text: raw, model } = await llmText(ctx, planSystemPrompt(shotCount, duration), userLines.join('\n'), { maxTokens: 6000 });
     const data = parsePlanJson(raw);
-    const plan = await repairBookend(ctx, normalizePlan(data, { duration, shotCount }));
+    const plan = await repairBookend(ctx, relieveSilence(normalizePlan(data, { duration, shotCount })));
     return { plan, model, raw, lint: lintPlan(plan) };
   }
 
@@ -542,7 +570,7 @@ async function generatePlan(ctx, params) {
     if (Array.isArray(part && part.shots)) shots.push(...part.shots);
   }
   if (!shots.length) throw new Error('分镜生成失败：模型返回里没有 shots');
-  const plan = await repairBookend(ctx, normalizePlan({ ...head, shots }, { duration, shotCount }));
+  const plan = await repairBookend(ctx, relieveSilence(normalizePlan({ ...head, shots }, { duration, shotCount })));
   return { plan, model, raw: rawHead, lint: lintPlan(plan) };
 }
 
