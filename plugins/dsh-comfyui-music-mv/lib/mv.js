@@ -883,6 +883,17 @@ export function composeFramePrompt(plan, shot) {
   if (shot.stillFrame) parts.push(`这一格定格在：${shot.stillFrame}`);
   // 物件点名：动作里没写到它时补一句，保证它真的进画面（写到了就不重复）
   if (shot.prop && !String(shot.action || '').includes(shot.prop)) parts.push(`画面里出现${shot.prop}`);
+  // 手在做"伸/递/接/够/抓"这类动作时，画面里必须有它能落在的东西——
+  // 否则模型会画一个空着的手在空中比划（实测第 4 镜：手伸出去是空的）。
+  const HAND_VERB = /伸手|递|接过|接到|够|抓|拎|捏|托|扶|按住|拧|扣|拨/;
+  const actionText = `${shot.action || ''} ${shot.performance || ''}`;
+  if (!insertShot && shot.prop && HAND_VERB.test(actionText)) {
+    parts.push(`这只手正对着${shot.prop}，看得清它和手的距离，不要空手做手势`);
+  }
+  // 拿"擦/抹/擦瓶身"这类动作时，东西应该在台面上，不是举在胸前。
+  if (/擦|抹|撸|拭/.test(actionText) && shot.prop) {
+    parts.push(`${shot.prop}放在台面上擦，不要举到胸前或举高`);
+  }
   if (insertShot) {
     parts.push('macro close-up on the object, extremely shallow depth of field, static shot, no people in frame');
   } else {
