@@ -264,6 +264,8 @@ export function normalizePlan(data, opts = {}) {
       performance: text(src.performance || src.microAction || src.acting),
       objective: text(src.objective || src.want),
       prop: text(src.prop || src.object || src.item),
+      // 定格：动作是一段时间，静帧只截一刻（变形镜必须写，否则模型只能猜）
+      stillFrame: text(src.stillFrame || src.freeze || src.freezeAt || src.frameMoment),
       // 这一镜出的是人形还是原形（狗 / 骷髅）——决定用哪套外形喂图
       form: text(src.form || src.shape || src.state),
       dialogue: text(src.dialogue),
@@ -449,6 +451,9 @@ export function composeFramePrompt(plan, shot) {
   if (shot.scene) parts.push(shot.scene);
   if (shot.time) parts.push(shot.time);
   if (shot.action) parts.push(shot.action);
+  // 定格：动作是「一段时间」，静帧只能截「一刻」。变形这类过程镜必须另外指定截在哪一刻，
+  // 否则模型只能猜，猜出来就是「已经变完」或者「完全没变」。
+  if (shot.stillFrame) parts.push(`这一格定格在：${shot.stillFrame}`);
   // 物件点名：动作里没写到它时补一句，保证它真的进画面（写到了就不重复）
   if (shot.prop && !String(shot.action || '').includes(shot.prop)) parts.push(`画面里出现${shot.prop}`);
   parts.push(cameraFragment(shot));
