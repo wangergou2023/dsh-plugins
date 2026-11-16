@@ -20,6 +20,7 @@ import {
   LIMITS, audioDuration, buildFramePrompt, buildShotVideoPrompt, buildTailFramePrompt,
   buildSliceAudioPrompt, buildStitchPrompt, fetchVideo, fetchComfyImage, fetchComfyAudio,
   firstOutputImage, saveVideo, saveFrame, normalizePlan, parsePlanJson, suggestShotCount,
+  charactersOf, castOf,
 } from './lib/mv.js';
 import { vocab, cameraSummary } from './lib/shotlang.js';
 import { probeFfmpeg, stitchWithTransitions } from './lib/ffmpeg.js';
@@ -278,7 +279,7 @@ function planSystemPrompt(shotCount, duration) {
     '  "ending": "结尾画面：最后一个镜头怎么收",',
     '  "notes": "导演阐述一两句：视觉基调、调色、为什么这么拍",',
     '  "style": "曲风（英文更稳）：流派、乐器、人声、情绪、速度",',
-    '  "character": "主角外形一句话，全片同一个人：年龄性别、发型发色、五官特征、服装",',
+    '  "characters": [{ "name": "角色名（短，2-4 字）", "look": "外形一句话：年龄性别、发型发色、五官特征、服装/铠甲/配饰" }],',
     '  "lyrics": "完整歌词，用 [Verse] [Chorus] [Bridge] 标记段落，每句一行",',
     '  "shots": [{',
     '    "label": "镜头标题（两句内）",',
@@ -294,7 +295,8 @@ function planSystemPrompt(shotCount, duration) {
     '    "dof": "景深：extreme_shallow|shallow|medium|deep",',
     '    "transition": "怎么接下一镜：cut|dissolve|match|whip|fade",',
     '    "action": "人物在这一镜做什么，具体到身体动作与表情；不写歌词、不写镜头参数",',
-    '    "dialogue": "这一镜要张口唱的那一句歌词（必须从歌词里原样摘一句）"',
+    '    "dialogue": "这一镜要张口唱的那一句歌词（必须从歌词里原样摘一句）",',
+    '    "cast": ["这一镜出场角色的名字，从上面对 characters 里选"]',
     '  }]',
     '}',
     '',
@@ -305,9 +307,10 @@ function planSystemPrompt(shotCount, duration) {
     '4. 景别必须有节奏地变化，不要连着三镜都是中景；运镜一镜只用一种。',
     '5. action 只写画面：人物动作、表情、与环境的关系。绝对不能写歌词、字幕、文字、水印。',
     '6. dialogue 必须填：从你写的 lyrics 里原样摘一句当这一镜对口型唱的词（纯环境空镜才可以留空）。',
-    '7. 主角始终是同一个人（脸、发型、服装不变），可以换环境、换景别、换机位。',
-    '8. 不要出现「四视图」「多视角」「分屏」「拼图」这类排版词。',
-    '9. 歌词要能唱：副歌重复、句子短、押韵。',
+    '7. characters 必须有 1–3 个角色，每个都要写清外形；cast 只填这一镜真正出镜的人，别漏也别多。',
+    '8. 主角始终是同一个人（脸、发型、服装不变），可以换环境、换景别、换机位；多角色同框时各自外形不能混。',
+    '9. 不要出现「四视图」「多视角」「分屏」「拼图」这类排版词。',
+    '10. 歌词要能唱：副歌重复、句子短、押韵。',
   ].join('\n');
 }
 
@@ -377,7 +380,7 @@ async function renderFrame(client, job, plan, shot, params) {
 async function renderShotVideo(client, job, plan, shot, options) {
   const built = await buildShotVideoPrompt(plan, shot, {
     frameImage: options.frameImage,
-    heroImage: job.hero && job.hero.name,
+    heroes: options.heroes || [],
     audios: Array.isArray(options.audios) ? options.audios : [],
     aspectRatio: options.aspectRatio,
     megapixels: options.megapixels || 0.4,
@@ -570,42 +573,51 @@ async function execute(job, params) {
   });
   await jobPatch(job.id, { plan, shots, total: shots.length });
 
-  /* 4. 主角定妆图 */
-  await jobPatch(job.id, { stage: 'hero', stageLabel: '生成主角定妆图' });
-  let heroImage = null;
-  if (job.hero && job.hero.name && params.resume !== false) {
-    heroImage = job.hero.name;
-  } else if (params.heroImage) {
-    heroImage = await ensureComfyFile(client, params.heroImage, 'image');
+  /* 4. 角色定妆图：每个角色一张，全片复用 */
+  await jobPatch(job.id, { stage: 'hero', stageLabel: '生成角色定妆图' });
+  const castList = charactersOf(plan);
+  let heroes = [];
+  if (Array.isArray(job.heroes) && job.heroes.length && params.resume !== false) {
+    // 续跑：已经有一整套就直接用
+    heroes = job.heroes;
+  } else if (params.heroImage && castList.length <= 1) {
+    const comfy = await ensureComfyFile(client, params.heroImage, 'image');
+    const c = castList[0] || { name: '主角', look: '' };
+    heroes = [{ label: c.name, look: c.look, comfy, file: null }];
   } else if (params.autoHero !== false) {
-    const heroPrompt = [
-      plan.character || '一位年轻的主角',
-      '单人半身肖像，正面看镜头，五官清晰，光线均匀',
-      plan.style ? `风格：${plan.style}` : '',
-      '电影感写真，纯色浅背景，不要文字',
-    ].filter(Boolean).join('，');
-    const built = await buildT2iPrompt({
-      prompt: heroPrompt,
-      aspectRatio: params.heroAspect || '1:1 (Square)',
-      megapixels: 1.0,
-      steps: params.heroSteps || 8,
-      filenamePrefix: 'mv_hero/' + job.id,
-    });
-    applyModelOverrides(built.prompt, params.models);
-    const promptId = await client.submit(built.prompt);
-    const entry = await client.wait(promptId, 1800000);
-    const item = Object.values(entry.outputs || {}).flatMap((o) => o.images || [])[0];
-    if (!item) throw new Error('定妆图没有产出');
-    const url = client.host + '/view?filename=' + encodeURIComponent(item.filename)
-      + '&subfolder=' + encodeURIComponent(item.subfolder || '') + '&type=' + encodeURIComponent(item.type || 'output');
-    const res = await fetch(url, { signal: AbortSignal.timeout(120000) });
-    const buffer = Buffer.from(await res.arrayBuffer());
-    await fs.mkdir(path.join(DATA_DIR, job.id), { recursive: true });
-    const heroFile = path.join(DATA_DIR, job.id, 'hero.png');
-    await fs.writeFile(heroFile, buffer);
-    heroImage = await client.upload(buffer, 'mv_hero_' + job.id + '.png', 'image/png');
-    await jobPatch(job.id, { hero: { file: heroFile, name: heroImage } });
+    for (let i = 0; i < castList.length; i += 1) {
+      const c = castList[i];
+      const heroPrompt = [
+        c.look || c.name || '一位年轻人',
+        '单人半身肖像，正面看镜头，五官清晰，光线均匀',
+        plan.style ? `风格：${plan.style}` : '',
+        '电影感写真，纯色浅背景，不要文字',
+      ].filter(Boolean).join('，');
+      const built = await buildT2iPrompt({
+        prompt: heroPrompt,
+        aspectRatio: params.heroAspect || '1:1 (Square)',
+        megapixels: 1.0,
+        steps: params.heroSteps || 8,
+        filenamePrefix: `mv_hero/${job.id}_${i + 1}`,
+      });
+      applyModelOverrides(built.prompt, params.models);
+      const promptId = await client.submit(built.prompt);
+      const entry = await client.wait(promptId, 1800000);
+      const item = firstOutputImage(entry, '29');
+      if (!item) throw new Error(`${c.name} 的定妆图没有产出`);
+      const buffer = await fetchComfyImage(client, item);
+      await fs.mkdir(path.join(DATA_DIR, job.id), { recursive: true });
+      const heroFile = path.join(DATA_DIR, job.id, `hero_${i + 1}.png`);
+      await fs.writeFile(heroFile, buffer);
+      const comfy = await client.upload(buffer, `mv_hero_${job.id}_${i + 1}.png`, 'image/png');
+      heroes.push({ label: c.name, look: c.look, comfy, file: heroFile });
+      await jobPatch(job.id, { heroes });
+    }
   }
+  await jobPatch(job.id, {
+    heroes,
+    hero: heroes[0] ? { file: heroes[0].file, name: heroes[0].comfy } : null,
+  });
 
   /* 5. 静帧：每镜一张，先给人看，不满意可以单张重 roll */
   const phase = String(params.phase || 'all');
@@ -684,7 +696,9 @@ async function execute(job, params) {
             if (slice) audios = [slice];
           } catch { /* 切片失败就当无声镜头处理，不阻断整支 */ }
         }
-        const made = await renderShotVideo(client, job, plan, live, { ...opt, frameImage: frameName, audios });
+        const want = new Set(castOf(plan, live).map((c) => c.name));
+        const heroRefs = (job.heroes || []).filter((h) => want.size === 0 || want.has(h.label));
+        const made = await renderShotVideo(client, job, plan, live, { ...opt, frameImage: frameName, audios, heroes: heroRefs });
         await jobPatchShot(job.id, shot.index, {
           frame: frameName,
           video: made.file,
@@ -1112,7 +1126,7 @@ export function apply(ctx) {
         const index = Number(body && body.index);
         const patch = (body && body.patch) || {};
         const allowed = ['label', 'section', 'beat', 'scene', 'time', 'size', 'horizontal', 'elevation',
-          'move', 'light', 'dof', 'transition', 'action', 'dialogue', 'seed', 'seconds'];
+          'move', 'light', 'dof', 'transition', 'action', 'dialogue', 'seed', 'seconds', 'cast'];
         await jobStore.refresh();
         const job = jobStore.get(id);
         const shot = job && Array.isArray(job.shots) ? job.shots.find((s) => s.index === index) : null;

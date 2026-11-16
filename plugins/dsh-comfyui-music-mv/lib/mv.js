@@ -182,6 +182,9 @@ export function normalizePlan(data, opts = {}) {
       transition: text(src.transition) || 'cut',
       action,
       dialogue: text(src.dialogue),
+      cast: Array.isArray(src.cast)
+        ? src.cast.map((x) => String(x || '').trim()).filter(Boolean)
+        : [],
       prompt: action,
       seed: Number.isFinite(Number(src.seed)) ? Math.trunc(Number(src.seed)) : null,
       // 运行时产物：静帧 / 历史版本 / 视频 / 末帧
@@ -205,7 +208,16 @@ export function normalizePlan(data, opts = {}) {
     title: String((data && data.title) || '').trim() || '未命名 MV',
     style: String((data && data.style) || '').trim(),
     lyrics: String((data && data.lyrics) || '').trim(),
+    // 兼容两种写法：新的 characters 数组，旧的单 character 字符串
     character: String((data && data.character) || '').trim(),
+    characters: Array.isArray(data && data.characters)
+      ? data.characters
+        .map((c) => ({
+          name: String((c && (c.name || c.role)) || '').trim(),
+          look: String((c && (c.look || c.description || c.appearance)) || '').trim(),
+        }))
+        .filter((c) => c.name || c.look)
+      : [],
     negative: String((data && data.negative) || '').trim(),
     story: {
       logline: picks('logline', 'oneLine', 'premise'),
@@ -219,6 +231,28 @@ export function normalizePlan(data, opts = {}) {
   };
 }
 
+/* --------------------------- 角色 --------------------------- */
+
+/** 全片角色表：新的 characters 数组优先，旧的单 character 字段兜底。 */
+export function charactersOf(plan) {
+  const list = Array.isArray(plan && plan.characters) ? plan.characters : [];
+  const clean = list
+    .map((c) => ({ name: String((c && c.name) || '').trim(), look: String((c && (c.look || c.description)) || '').trim() }))
+    .filter((c) => c.name || c.look);
+  if (clean.length) return clean;
+  if (plan && plan.character) return [{ name: '主角', look: String(plan.character).trim() }];
+  return [];
+}
+
+/** 这一镜出场的人：shot.cast 里点了名就取交集，没点就全上。 */
+export function castOf(plan, shot) {
+  const all = charactersOf(plan);
+  const names = Array.isArray(shot && shot.cast) ? shot.cast.map((n) => String(n || '').trim()).filter(Boolean) : [];
+  if (!names.length) return all;
+  const picked = all.filter((c) => names.includes(c.name));
+  return picked.length ? picked : all;
+}
+
 /* --------------------------- 提示词组装 --------------------------- */
 
 /**
@@ -227,7 +261,12 @@ export function normalizePlan(data, opts = {}) {
  */
 export function composeFramePrompt(plan, shot) {
   const parts = [];
-  if (plan.character) parts.push(plan.character.replace(/\s+/g, ' ').trim());
+  const cast = castOf(plan, shot);
+  if (cast.length) {
+    parts.push(cast.map((c) => (c.look ? `${c.name}（${c.look}）` : c.name)).join('；'));
+  } else if (plan.character) {
+    parts.push(plan.character.replace(/\s+/g, ' ').trim());
+  }
   if (shot.scene) parts.push(shot.scene);
   if (shot.time) parts.push(shot.time);
   if (shot.action) parts.push(shot.action);
@@ -261,7 +300,9 @@ export async function buildFramePrompt(plan, shot, options = {}) {
 export function composeVideoPrompt(plan, shot, opts = {}) {
   const pics = [];
   if (opts.frameImage) pics.push('以 <Picture 1> 作为本镜的开场画面，人物、服装、场景、光线都与它一致');
-  if (opts.heroImage) pics.push(opts.frameImage ? '<Picture 2> 是同一人物的身份参考' : '<Picture 1> 是同一人物的身份参考');
+  for (const item of opts.identity || []) {
+    pics.push(`<Picture ${item.picture}> 是${item.name}的身份参考，长相、发型、服装不能变`);
+  }
   if (opts.audioRef) {
     const line = shot.dialogue ? `，唱的歌词是「${shot.dialogue}」` : '';
     pics.push(`<Audio 1> 是本镜要唱的那一段歌声，人物严格按 <Audio 1> 的音色与节奏开口对口型${line}`);
@@ -278,14 +319,26 @@ export function composeVideoPrompt(plan, shot, opts = {}) {
   return head + body;
 }
 
-/** 生成这一镜的 ref2v 图：首帧=静帧，身份=定妆图。 */
+/** 生成这一镜的 ref2v 图：首帧=静帧，随后是每个出场角色的定妆图。 */
 export async function buildShotVideoPrompt(plan, shot, options = {}) {
   const images = [];
   if (options.frameImage) images.push(options.frameImage);
-  if (options.heroImage) images.push(options.heroImage);
+
+  // 兼容旧的单图入参
+  const heroes = Array.isArray(options.heroes) ? options.heroes.slice() : [];
+  if (heroes.length === 0 && options.heroImage) heroes.push({ label: '主角', comfy: options.heroImage });
+
+  const identity = [];
+  for (const hero of heroes) {
+    const comfy = hero && hero.comfy;
+    if (!comfy) continue;
+    images.push(comfy);
+    identity.push({ name: hero.label || '主角', picture: images.length });
+  }
+
   const promptText = composeVideoPrompt(plan, shot, {
     frameImage: options.frameImage,
-    heroImage: options.heroImage,
+    identity,
     audioRef: Array.isArray(options.audios) && options.audios.length > 0,
   });
   const built = await buildRef2vPrompt({

@@ -244,6 +244,17 @@ window.__ModuleLoader__.load({
 
       function patchPlan(patch) { setPlan(function (p) { return p ? { ...p, ...patch } : p; }); }
 
+      function planCharacters() {
+        if (!plan) return [];
+        if (Array.isArray(plan.characters) && plan.characters.length) return plan.characters;
+        if (plan.character) return [{ name: '主角', look: plan.character }];
+        return [];
+      }
+
+      function setCharacters(list) {
+        patchPlan({ characters: list, character: '' });
+      }
+
       function exportPlan() {
         if (!job) { setError('这个任务还没生成方案，导不了'); return; }
         window.open('/api/comfyui-music-mv/export?id=' + encodeURIComponent(job.id), '_blank');
@@ -436,12 +447,38 @@ window.__ModuleLoader__.load({
             ),
             plan.story && plan.story.logline ? h('div', { style: { ...small, marginTop: '4px' } }, '故事：' + plan.story.logline) : null,
             plan.story && plan.story.arc ? h('div', { style: muted }, '情绪：' + plan.story.arc) : null,
-            h('div', { style: { ...muted, marginTop: '8px' } }, '主角（全片同一人）'),
-            h('textarea', {
-              value: plan.character || '', rows: 2,
-              onChange: function (e) { patchPlan({ character: e.target.value }); },
-              style: { width: '100%', resize: 'vertical', fontFamily: 'inherit', fontSize: '12px' },
+            h('div', { style: { ...muted, marginTop: '8px' } }, '角色（每个角色一张定妆图，全片复用）'),
+            ...planCharacters().map(function (c, i) {
+              const list = planCharacters();
+              return h('div', { key: i, style: { display: 'flex', gap: '6px', marginBottom: '4px', alignItems: 'flex-start' } },
+                h('input', {
+                  value: c.name || '',
+                  placeholder: '名字',
+                  onChange: function (e) {
+                    const next = list.slice(); next[i] = { ...next[i], name: e.target.value }; setCharacters(next);
+                  },
+                  style: { width: '112px', fontSize: '12px' },
+                }),
+                h('textarea', {
+                  value: c.look || '',
+                  rows: 2,
+                  placeholder: '外形：年龄性别、发型发色、五官特征、服装/铠甲/配饰',
+                  onChange: function (e) {
+                    const next = list.slice(); next[i] = { ...next[i], look: e.target.value }; setCharacters(next);
+                  },
+                  style: { flex: 1, resize: 'vertical', fontFamily: 'inherit', fontSize: '12px' },
+                }),
+                h('button', {
+                  className: 'cfl-chip', style: { fontSize: '11px' }, title: '删掉这个角色',
+                  onClick: function () { setCharacters(list.slice().filter(function (_, k) { return k !== i; })); },
+                }, '✕')
+              );
             }),
+            h('button', {
+              className: 'cfl-chip', style: { fontSize: '12px' }, onClick: function () {
+                setCharacters(planCharacters().concat([{ name: '', look: '' }]));
+              },
+            }, '+ 添加角色'),
             h('div', { style: { ...muted, marginTop: '6px' } }, '曲风 / 歌词（喂给 YuE2）'),
             h('textarea', {
               value: plan.style || '', rows: 1,
@@ -471,7 +508,18 @@ window.__ModuleLoader__.load({
           )
         : null;
 
-      return h('div', { style: { padding: '4px 2px' } },
+      // 根节点自己当滚动容器：宿主给的面板槽位不滚动，内容一多就被裁掉（滚轮完全不动）。
+      return h('div', {
+        style: {
+          padding: '4px 2px',
+          height: '100%',
+          maxHeight: '100%',
+          overflowY: 'auto',
+          overflowX: 'hidden',
+          boxSizing: 'border-box',
+          overscrollBehavior: 'contain',
+        },
+      },
         h('div', { style: { display: 'flex', alignItems: 'baseline', gap: '10px', flexWrap: 'wrap' } },
           h('h2', { style: { margin: 0, fontSize: '18px' } }, '音乐 MV'),
           h('span', { style: muted },
