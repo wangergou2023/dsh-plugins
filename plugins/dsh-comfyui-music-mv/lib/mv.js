@@ -1132,6 +1132,24 @@ export function lintPlan(plan) {
       ? 'logline 里写了「其实/真相/原来」，等于把 reveal 提前说了'
       : (leakRatio > 0.3 ? `logline 和揭示重合 ${Math.round(leakRatio * 100)}%，等于说漏了` : `${logline.length} 字，未剧透`));
 
+  // 18. 揭示那一格只能拍一件事：动作必须围着 sign 转，不许再塞别的活
+  const signShot = shots[twistAt - 1];
+  const signText = String(twist.sign || '').trim();
+  let signFocus = true;
+  let signFocusDetail = '没有 twist.sign，无法判断这一格该拍什么';
+  if (signText && signShot) {
+    const sb = bigrams(signText);
+    const ab = bigrams(`${signShot.action || ''}${signShot.performance || ''}`);
+    let hit = 0;
+    for (const g of sb) if (ab.has(g)) hit += 1;
+    const ratio = sb.size ? hit / sb.size : 0;
+    signFocus = ratio >= 0.34;
+    signFocusDetail = signFocus
+      ? `第 ${signShot.index + 1} 镜动作与信号咬合 ${Math.round(ratio * 100)}%`
+      : `第 ${signShot.index + 1} 镜动作只有 ${Math.round(ratio * 100)}% 落在信号上——这一格要只拍那一件事`;
+  }
+  push('sign-focus', '揭示镜只拍一件事', signFocus, signFocusDetail);
+
   const passed = checks.filter((c) => c.ok).length;
   const total = checks.length || 1;
   return {

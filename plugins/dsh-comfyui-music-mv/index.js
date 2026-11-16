@@ -563,7 +563,7 @@ async function generatePlan(ctx, params) {
   if (shotCount <= 10) {
     const { text: raw, model } = await llmText(ctx, planSystemPrompt(shotCount, duration), userLines.join('\n'), { maxTokens: 6000 });
     const data = parsePlanJson(raw);
-    const plan = cleanLogline(mergeScenes(trimLongActions(await repairBookend(ctx, await addWarmBeat(ctx, relieveSilence(breakLyricDup(extendSilentBeat(normalizePlan(data, { duration, shotCount })))))))));
+    const plan = cleanLogline(mergeScenes(trimLongActions(await focusSignShot(ctx, await repairBookend(ctx, await addWarmBeat(ctx, relieveSilence(breakLyricDup(extendSilentBeat(normalizePlan(data, { duration, shotCount }))))))))));
     return { plan, model, raw, lint: lintPlan(plan) };
   }
 
@@ -597,7 +597,7 @@ async function generatePlan(ctx, params) {
     if (Array.isArray(part && part.shots)) shots.push(...part.shots);
   }
   if (!shots.length) throw new Error('分镜生成失败：模型返回里没有 shots');
-  const plan = cleanLogline(mergeScenes(trimLongActions(await repairBookend(ctx, await addWarmBeat(ctx, relieveSilence(breakLyricDup(extendSilentBeat(normalizePlan({ ...head, shots }, { duration, shotCount })))))))));
+  const plan = cleanLogline(mergeScenes(trimLongActions(await focusSignShot(ctx, await repairBookend(ctx, await addWarmBeat(ctx, relieveSilence(breakLyricDup(extendSilentBeat(normalizePlan({ ...head, shots }, { duration, shotCount }))))))))));
   return { plan, model, raw: rawHead, lint: lintPlan(plan) };
 }
 
@@ -809,6 +809,46 @@ async function addWarmBeat(ctx, plan) {
       shot.prop = keyProp;
     }
   }
+  return out;
+}
+
+/* ---------------------------- 揭示镜收束 ---------------------------- */
+
+const FOCUS_SYSTEM = `你是剪辑师。这一镜是全片的揭示镜，现在的动作里塞了太多活，观众来不及看那件东西。
+
+只改这一镜的 action 和 performance，规则：
+1. 整镜只拍一件事：给的那个"画面信号"。动作里除了它，最多再留一个人体的反应（呼吸、眨眼、手指松一下）。
+2. 不许出现台词、不许解释、不许加新道具、不许写心理活动。
+3. action 12–70 字，只写看得见的物理变化，从信号开始，到信号结束为止。
+4. performance 写"先做→停在哪→最后做"，落到身体细节。
+5. 保留角色原本的姿势与位置，接得上前后镜。
+
+只输出 JSON：{"action":"…","performance":"…"}`;
+
+async function focusSignShot(ctx, plan) {
+  const before = lintPlan(plan);
+  const check = before.checks.find((c) => c.id === 'sign-focus');
+  if (!check || check.ok) return plan;
+  const twist = plan.twist || {};
+  const sign = String(twist.sign || '').trim();
+  const idx = (Number(twist.atIndex) || 0) - 1;
+  const shot = (plan.shots || [])[idx];
+  if (!sign || !shot) return plan;
+  const user = [
+    `片名：《${plan.title}》`,
+    `全片揭示：${twist.what}`,
+    `这一镜的画面信号（只拍这个）：${sign}`,
+    `现在第 ${shot.index + 1} 镜写成这样（太挤）：`,
+    JSON.stringify({ label: shot.label, size: shot.size, action: shot.action, performance: shot.performance, prop: shot.prop }, null, 1),
+  ].join('\n');
+  const { text: raw } = await llmText(ctx, FOCUS_SYSTEM, user, { maxTokens: 420 });
+  const data = parsePlanJson(raw);
+  const action = String((data && data.action) || '').trim();
+  const performance = String((data && data.performance) || '').trim();
+  if (!action) return plan;
+  const out = JSON.parse(JSON.stringify(plan));
+  out.shots[idx].action = action.slice(0, 90);
+  if (performance) out.shots[idx].performance = performance;
   return out;
 }
 
