@@ -231,7 +231,7 @@ export function allocateRhythmTimeline(duration, meta = []) {
   // 先乘 0.76 再被 flat 分支覆盖，结果有台词的镜反而最长）。
   for (let i = 0; i < weights.length; i += 1) {
     const m = metaWithCount[i] || {};
-    if (m.castCount >= 2) weights[i] *= m.dialogue ? 0.72 : 1.34;
+    if (m.castCount >= 2) weights[i] *= m.dialogue ? 0.78 : 1.16;
   }
   const MIN = LIMITS.shotMinSeconds;
   const MAX = LIMITS.shotMaxSeconds;
