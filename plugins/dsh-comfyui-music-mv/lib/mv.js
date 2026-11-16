@@ -303,10 +303,17 @@ export function normalizePlan(data, opts = {}) {
     throw new Error(`有 ${empty.length} 个镜头没有提示词（第 ${empty.map((s) => s.index + 1).join('、')} 个）`);
   }
 
+  // 歌词可能只写在场次里（每场一句），顶层 lyrics 空着——不补上的话出歌直接报 lyrics_required
+  const sceneLyrics = (Array.isArray(data && data.scenes) ? data.scenes : [])
+    .map((s) => String((s && (s.lyric || s.line || s.dialogue)) || '').trim())
+    .filter(Boolean);
+  const topLyrics = String((data && data.lyrics) || '').trim();
+  const lyrics = topLyrics || [...new Set(sceneLyrics)].join('\n');
+
   return {
     title: String((data && data.title) || '').trim() || '未命名 MV',
     style: String((data && data.style) || '').trim(),
-    lyrics: String((data && data.lyrics) || '').trim(),
+    lyrics,
     // 兼容两种写法：新的 characters 数组，旧的单 character 字符串
     character: String((data && data.character) || '').trim(),
     characters: Array.isArray(data && data.characters)
@@ -1170,6 +1177,13 @@ export function lintPlan(plan) {
       : `第 ${signShot.index + 1} 镜动作只有 ${Math.round(ratio * 100)}% 落在信号上——这一格要只拍那一件事`;
   }
   push('sign-focus', '揭示镜只拍一件事', signFocus, signFocusDetail);
+
+  // 19. 歌词：没有歌词就出不了歌，出不了歌就没有时间轴，整条链断在第一步
+  const lyricText = String((plan && plan.lyrics) || '');
+  const lyricLines = lyricText.split(/\n/).map((l) => l.trim()).filter((l) => l && !/^\[/.test(l));
+  const lyricOk = lyricLines.length >= 4 && lyricText.length >= 24;
+  push('lyrics', '有完整的歌词（≥4 行）', lyricOk,
+    lyricOk ? `${lyricLines.length} 行 / ${lyricText.length} 字` : '没有歌词：出歌会直接报 lyrics_required，整条链断在第一步');
 
   const passed = checks.filter((c) => c.ok).length;
   const total = checks.length || 1;
