@@ -276,7 +276,7 @@ export function normalizePlan(data, opts = {}) {
   const shots = timeline.map((slot, i) => {
     const src = rawShots[i] || {};
     const text = (v) => String(v || '').replace(/\s+/g, ' ').trim();
-    const action = text(src.action || src.prompt || src.description);
+    const action = deSimile(text(src.action || src.prompt || src.description));
     return {
       index: i,
       start: slot.start,
@@ -297,7 +297,7 @@ export function normalizePlan(data, opts = {}) {
       transition: text(src.transition) || 'cut',
       action,
       // 表演层：影帝级 MV 靠这个，不靠"他很悲伤"这种形容词
-      performance: text(src.performance || src.microAction || src.acting),
+      performance: deSimile(text(src.performance || src.microAction || src.acting)),
       objective: text(src.objective || src.want),
       prop: text(src.prop || src.object || src.item),
       // 定格：动作是一段时间，静帧只截一刻（变形镜必须写，否则模型只能猜）
@@ -605,6 +605,20 @@ export function breakLyricDup(plan) {
  * 文字里写"捡起来、攥在手里"，模型就给你补一个人（实测三次都是狗头人身）；
  * 改成"叼起来、咬住"，画面才是狗。
  */
+/**
+ * 去掉"像要 / 仿佛 / 似乎"这类比喻与揣测。
+ * 分镜是给摄影机看的：'像要把毛按回去' 拍不出来，'把毛按回去' 能拍。
+ * 模型不知道这个区别，写剧本时会一路用比喻，图就永远差一口气。
+ */
+export function deSimile(text) {
+  return String(text || '')
+    .replace(/像要(把|去|往)?/g, '$1')
+    .replace(/(像是|像是在|像在|好像|仿佛|似乎|宛如|犹如)/g, '')
+    .replace(/[，。、]{2,}/g, '，')
+    .replace(/^[，、]/, '')
+    .trim();
+}
+
 export function dogifyText(text) {
   return String(text || '')
     .replace(/捡起/g, '叼起').replace(/捡/g, '叼')
