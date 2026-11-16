@@ -408,6 +408,15 @@ export function segmentLyrics(lyrics, index, total) {
   return lines.slice(index * per, (index + 1) * per).join('\n').trim();
 }
 
+/** 这一镜的视线落点：静帧最容易拍成"站好、看镜头"，所以每条都要有落点。 */
+export function eyelineFor(shot, castCount = 0) {
+  if (shot && shot.eyeline) return shot.eyeline;
+  const actingText = `${(shot && shot.action) || ''} ${(shot && shot.performance) || ''} ${(shot && shot.objective) || ''}`;
+  if (castCount > 1) return '看向对方（脸或手）';
+  if (/找|看|望|寻|凝视|盯着|抬头|低头/.test(actingText)) return '看向画外一个具体方向';
+  return '看着手里的东西';
+}
+
 export function composeFramePrompt(plan, shot) {
   const parts = [];
   const cast = castOf(plan, shot);
@@ -444,6 +453,14 @@ export function composeFramePrompt(plan, shot) {
   if (shot.prop && !String(shot.action || '').includes(shot.prop)) parts.push(`画面里出现${shot.prop}`);
   parts.push(cameraFragment(shot));
   if (shot.beat) parts.push(`情绪：${shot.beat}`);
+  // 表演指向：静帧最容易拍成"站好、看镜头"。给视线落点，并要求动作发生在半途。
+  const eyeline = cast.length > 1
+    ? '视线落在另一个角色身上（脸或手），不看镜头'
+    : (/找|看|望|寻|凝视|盯着|抬头|低头/.test(`${shot.action || ''} ${shot.performance || ''} ${shot.objective || ''}`)
+      ? '视线看向画外的一个具体方向，不看镜头'
+      : '视线落在手里的东西上，不看镜头');
+  parts.push(eyeline);
+  parts.push('捕捉动作正在进行到一半的瞬间（不是摆拍），表情具体、有微小的肌肉动作');
   // 服装护栏：Krea2 很容易把人形画成赤膊（定妆里写了"穿…"照样脱），
   // 把衣服单独拎出来在镜头描述之后再说一遍，命中最稳。
   if (cast.length && !beastShot) {
