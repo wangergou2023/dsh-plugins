@@ -20,10 +20,10 @@ import {
   LIMITS, audioDuration, buildFramePrompt, buildShotVideoPrompt, buildTailFramePrompt,
   buildSliceAudioPrompt, buildStitchPrompt, fetchVideo, fetchComfyImage, fetchComfyAudio,
   firstOutputImage, saveVideo, saveFrame, normalizePlan, parsePlanJson, suggestShotCount,
-  charactersOf, castOf, lintPlan,
+  charactersOf, castOf, lintPlan, segmentLyrics, composeFramePrompt, splitLook,
 } from './lib/mv.js';
 import { vocab, cameraSummary } from './lib/shotlang.js';
-import { probeFfmpeg, stitchWithTransitions } from './lib/ffmpeg.js';
+import { probeFfmpeg, stitchWithTransitions, concatAudio } from './lib/ffmpeg.js';
 import { cinematicPass } from './lib/grade.js';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -806,23 +806,58 @@ async function execute(job, params) {
     }
     songInfo = audioDuration(songBuffer, songFileName);
   } else {
-    const built = await buildSongPrompt({
-      style: plan.style || params.style,
-      lyrics: plan.lyrics || params.lyrics,
-      duration: plan.duration || params.duration,
-      format: 'flac',
-      steps: params.songSteps,
-      seed: params.songSeed,
-      filenamePrefix: 'mv/' + job.id,
-    });
-    applyModelOverrides(built.prompt, params.models);
-    const promptId = await client.submit(built.prompt);
-    const entry = await client.wait(promptId, 3600000);
-    const audio = await fetchSongAudio(client, entry);
-    songBuffer = audio.buffer;
-    songFileName = audio.filename;
+    // YuE2 单次生成大约只能出 130 秒（实测要 210 秒只给 130.6 秒）。
+    // 要更长就分几段出、再用 ffmpeg 交叉淡化接起来。
+    const SEG_MAX = 120;
+    const SEG_FADE = 6;
+    const wantDuration = Number(plan.duration || params.duration) || 60;
+    const segments = wantDuration > SEG_MAX ? Math.ceil((wantDuration + SEG_FADE) / SEG_MAX) : 1;
+    // 每段多要一点：交叉淡化会吃掉 (segments-1)*fade 秒，
+    // 而且 YuE2 通常比请求值略短（108 要出 104），按 3% 余量补回来。
+    const segDuration = segments > 1
+      ? Math.round((wantDuration + (segments - 1) * SEG_FADE) / segments / 0.97)
+      : Math.round(wantDuration);
+    const pieces = [];
+    for (let i = 0; i < segments; i += 1) {
+      if (segments > 1) {
+        await jobPatch(job.id, {
+          stage: 'song',
+          stageLabel: `生成歌曲（第 ${i + 1}/${segments} 段）`,
+          songSegments: { total: segments, done: i, segDuration },
+        });
+      }
+      const built = await buildSongPrompt({
+        style: (plan.style || params.style || '') + (i > 0 ? ', continuing seamlessly from the previous section, same key, same tempo, same instrumentation' : ''),
+        lyrics: segmentLyrics(plan.lyrics || params.lyrics, i, segments),
+        duration: segDuration,
+        format: 'flac',
+        steps: params.songSteps,
+        seed: params.songSeed,
+        filenamePrefix: 'mv/' + job.id + '_s' + (i + 1),
+      });
+      applyModelOverrides(built.prompt, params.models);
+      const promptId = await client.submit(built.prompt);
+      const entry = await client.wait(promptId, 3600000);
+      const audio = await fetchSongAudio(client, entry);
+      const pieceFile = path.join(DATA_DIR, job.id, `song_s${i + 1}.flac`);
+      await fs.mkdir(path.dirname(pieceFile), { recursive: true });
+      await fs.writeFile(pieceFile, audio.buffer);
+      pieces.push(pieceFile);
+      songFileName = audio.filename;
+    }
+    if (pieces.length > 1) {
+      const joined = await concatAudio({
+        pluginDir: HERE, files: pieces, outFile: path.join(DATA_DIR, job.id, 'song_full.flac'),
+        fade: SEG_FADE, maxSeconds: wantDuration,
+      });
+      songBuffer = await fs.readFile(joined.file);
+      songFileName = 'song_full.flac';
+      await jobPatch(job.id, { songSegments: { total: segments, done: segments, segDuration, fade: SEG_FADE } });
+    } else {
+      songBuffer = await fs.readFile(pieces[0]);
+    }
     songInfo = audioDuration(songBuffer, songFileName);
-    songName = await client.upload(songBuffer, 'mv_' + job.id + path.extname(songFileName || '.flac'), mimeOfName(songFileName));
+    songName = await client.upload(songBuffer, 'mv_' + job.id + '.flac', 'audio/flac');
   }
   if (!songInfo || !songInfo.duration) {
     throw new Error('读不出音频时长（只支持 flac/mp3）：请用 flac 格式出歌，或手动指定 songSeconds');

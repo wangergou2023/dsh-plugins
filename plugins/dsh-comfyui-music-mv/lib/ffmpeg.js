@@ -71,6 +71,40 @@ export async function probeFfmpeg(pluginDir) {
  * @param audioFile    整首歌
  * @param totalSeconds 成品时长（= 歌长）
  */
+/**
+ * 把多段歌接成一首：YuE2 单次生成上限约 130 秒，想要 3 分钟以上的片子就得拼段。
+ * 用 acrossfade 交叉淡化，接缝处不会"咔"一下；接缝会重叠 fade 秒，所以每段要多要一点。
+ */
+export async function concatAudio({ pluginDir, files, outFile, fade = 6, maxSeconds = 0 }) {
+  if (!files || files.length === 0) throw new Error('没有音频片段');
+  const bin = findFfmpeg(pluginDir);
+  await fsp.mkdir(path.dirname(outFile), { recursive: true });
+  if (files.length === 1) {
+    await fsp.copyFile(files[0], outFile);
+    return { file: outFile, bin, fade: 0 };
+  }
+  const inputs = [];
+  files.forEach((f) => inputs.push('-i', f));
+  const parts = [];
+  // acrossfade 要求两边采样率一致，先统一重采样
+  files.forEach((_, i) => parts.push(`[${i}:a]aresample=48000[ai${i}]`));
+  let last = '[ai0]';
+  for (let i = 1; i < files.length; i += 1) {
+    const out = i === files.length - 1 ? '[aout]' : `[a${i}]`;
+    parts.push(`${last}[ai${i}]acrossfade=d=${fade}:c1=tri:c2=tri${out}`);
+    last = out;
+  }
+  const args = [
+    '-y', ...inputs, '-filter_complex', parts.join(';'), '-map', '[aout]',
+    ...(Number(maxSeconds) > 0.5 ? ['-t', Number(maxSeconds).toFixed(2)] : []),
+    '-c:a', 'flac', outFile,
+  ];
+  const stderr = await run(bin, args);
+  const stat = await fsp.stat(outFile).catch(() => null);
+  if (!stat || stat.size === 0) throw new Error('拼接音频失败：' + stderr.slice(-400));
+  return { file: outFile, bin, fade };
+}
+
 export async function stitchWithTransitions({ pluginDir, clips, transitions, audioFile, totalSeconds, outFile }) {
   if (!clips || clips.length === 0) throw new Error('没有可拼接的镜头');
   if (!audioFile) throw new Error('缺少音轨');

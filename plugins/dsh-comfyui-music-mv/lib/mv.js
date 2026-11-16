@@ -312,6 +312,23 @@ export function castOf(plan, shot) {
  * 静帧（图片）提示词：这一镜的"定妆照"。
  * 结构化字段在这里咬合：人物 + 场景 + 时间 + 动作 + 景别/角度/运镜/灯光/景深 + 全片风格。
  */
+/**
+ * 把歌词切成 N 段，喂给分段生成的歌。
+ * 优先按 [Verse]/[Chorus] 段落块切，块数不够再按行切——保证每段都有词。
+ */
+export function segmentLyrics(lyrics, index, total) {
+  const text = String(lyrics || '').trim();
+  if (!text || total <= 1) return text;
+  const blocks = text.split(/\n(?=\[)/).map((s) => s.trim()).filter(Boolean);
+  if (blocks.length >= total) {
+    const per = Math.ceil(blocks.length / total);
+    return blocks.slice(index * per, (index + 1) * per).join('\n\n').trim();
+  }
+  const lines = text.split('\n').map((s) => s.trim()).filter(Boolean);
+  const per = Math.ceil(lines.length / total);
+  return lines.slice(index * per, (index + 1) * per).join('\n').trim();
+}
+
 export function composeFramePrompt(plan, shot) {
   const parts = [];
   const cast = castOf(plan, shot);
@@ -369,8 +386,7 @@ export function composeFramePrompt(plan, shot) {
     .join('。');
 }
 
-/** 生成这一镜的静帧图（Krea2）。 */
-export async function buildFramePrompt(plan, shot, options = {}) {
+/** 生成这一镜的静帧图（Krea2）。 */export async function buildFramePrompt(plan, shot, options = {}) {
   const promptText = composeFramePrompt(plan, shot);
   const built = await buildT2iPrompt({
     prompt: promptText,
