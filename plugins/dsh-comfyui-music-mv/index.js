@@ -1,4 +1,4 @@
-/**
+﻿/**
  * dsh-comfyui-music-mv —— 音乐 MV 生成插件。
  *
  * 一条链：出歌（YuE2）→ 主角定妆图（Krea2）→ 每镜头 5–15s 视频（MiniMax H3）
@@ -643,6 +643,43 @@ async function reviewPlan(ctx, plan) {
   const weak = shots.filter((s) => s.total <= 14).map((s) => s.i);
   const avg = shots.length ? shots.reduce((a, s) => a + s.total, 0) / shots.length : 0;
   return { model, overall, shots, weak, avg: Number(avg.toFixed(2)) };
+}
+
+/* ---------------------------- 两版对比（A/B，比打分稳得多） ---------------------------- */
+
+const COMPARE_SYSTEM = `你是分镜指导。给你同一部片的两个版本，逐镜比较：哪一版"一眼能看懂、有阻力、表演具体"。
+
+绝对打分噪声很大，两版放在一起比要可靠得多——这一镜只能选一个赢家，不许平票，除非两版一字不差。
+判定优先看：这一格里主体是否唯一、有没有一个卡住的瞬间、表演是否落到身体细节。
+
+只输出 JSON：
+{"wins":{"A":0,"B":0,"tie":0},"shots":[{"i":1,"winner":"A","why":"一句理由"}]}`;
+
+async function comparePlans(ctx, planA, planB) {
+  const brief = (plan) => (plan.shots || []).map((s) => ({
+    i: s.index + 1,
+    label: s.label,
+    action: s.action,
+    performance: s.performance,
+    objective: s.objective,
+    prop: s.prop,
+  }));
+  const user = [
+    `片名：《${planA.title}》`,
+    `A 版分镜：`, JSON.stringify(brief(planA), null, 1),
+    `B 版分镜：`, JSON.stringify(brief(planB), null, 1),
+    '逐镜判断 A 还是 B 更好。',
+  ].join('\n');
+  const { text: raw, model } = await llmText(ctx, COMPARE_SYSTEM, user, { maxTokens: 7000 });
+  const data = parsePlanJson(raw);
+  const shots = (data && Array.isArray(data.shots) ? data.shots : []).map((s) => ({
+    i: Number(s.i) || 0,
+    winner: String(s.winner || '').trim().toUpperCase() === 'B' ? 'B' : String(s.winner || '').trim().toUpperCase() === 'TIE' ? 'tie' : 'A',
+    why: String(s.why || '').trim(),
+  })).filter((s) => s.i > 0);
+  const wins = { A: 0, B: 0, tie: 0 };
+  for (const s of shots) wins[s.winner] = (wins[s.winner] || 0) + 1;
+  return { model, wins, shots };
 }
 
 /* ---------------------------- 弱镜返修 ---------------------------- */
@@ -1549,6 +1586,35 @@ export function apply(ctx) {
       },
     }));
 
+    /** 两版逐镜对打：打分噪声大，比 A/B 稳。 */
+    disposers.push(webServer.register({
+      kind: 'exact',
+      path: '/api/comfyui-music-mv/compare',
+      handler: async (request, response) => {
+        try {
+          if (request.method !== 'POST') { sendJson(response, 405, { error: 'method_not_allowed' }); return; }
+          if (!sameOrigin(request)) { sendJson(response, 403, { error: 'forbidden: same-origin only' }); return; }
+          let body = null;
+          try { body = await readJsonBody(request); } catch { body = null; }
+          if (!body) { sendJson(response, 400, { error: 'bad_body' }); return; }
+          const pick = (v) => {
+            if (v && typeof v === 'object' && Array.isArray(v.shots)) return v;
+            if (typeof v === 'string') {
+              const job = jobStore.get(v);
+              if (job) return job.plan;
+            }
+            return null;
+          };
+          const a = pick(body.a);
+          const b = pick(body.b);
+          if (!a || !b) { sendJson(response, 400, { error: 'two_plans_required', message: 'a / b 各给一个 plan，或两个任务 id' }); return; }
+          sendJson(response, 200, await comparePlans(ctx, a, b));
+        } catch (error) {
+          sendJson(response, 500, { error: 'compare_failed', message: String((error && error.message) || error) });
+        }
+      },
+    }));
+
     disposers.push(webServer.register({
       kind: 'exact',
       path: '/api/comfyui-music-mv/run',
@@ -1916,3 +1982,4 @@ export function apply(ctx) {
     for (const dispose of disposers) dispose();
   }, 'music-mv tools');
 }
+
