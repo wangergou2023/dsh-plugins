@@ -20,7 +20,7 @@ import {
   LIMITS, audioDuration, buildFramePrompt, buildShotVideoPrompt, buildTailFramePrompt,
   buildSliceAudioPrompt, buildStitchPrompt, fetchVideo, fetchComfyImage, fetchComfyAudio,
   firstOutputImage, saveVideo, saveFrame, normalizePlan, parsePlanJson, suggestShotCount,
-  charactersOf, castOf,
+  charactersOf, castOf, lintPlan,
 } from './lib/mv.js';
 import { vocab, cameraSummary } from './lib/shotlang.js';
 import { probeFfmpeg, stitchWithTransitions } from './lib/ffmpeg.js';
@@ -290,6 +290,7 @@ function planSystemPrompt(shotCount, duration) {
     '  "style": "曲风（英文更稳）：流派、乐器、人声、情绪、速度",',
     '  "look": "视觉基调一句话，只写画面：胶片感/数字感、调色、镜头类型、光线基调",',
     '  "characters": [{ "name": "角色名（短，2-4 字）", "look": "外形一句话：年龄性别、发型发色、五官特征、服装/铠甲/配饰" }],',
+    '  "props": [{ "name": "物件名（2-4 字）", "meaning": "它在这一支片子里怎么变意思：开场是…，中间变成…，最后一镜成了…" }],',
     '  "lyrics": "完整歌词，用 [Verse] [Chorus] [Bridge] 标记段落，每句一行",',
     '  "shots": [{',
     '    "label": "镜头标题（两句内）",',
@@ -307,6 +308,7 @@ function planSystemPrompt(shotCount, duration) {
     '    "action": "人物在这一镜做什么，具体到身体动作与表情；不写歌词、不写镜头参数",',
     '    "performance": "这一镜的表演细节：手/眼/呼吸怎么变，一个可以被拍到的微动作，不要形容词",',
     '    "objective": "这一镜人物想要什么（用动词：想挂断、想被听见、想藏起手）",',
+    '    "prop": "这一镜的关键物件（从上面对 props 里选一个，必须出现）",',
     '    "dialogue": "这一镜要张口唱的那一句歌词（必须从歌词里原样摘一句）",',
     '    "cast": ["这一镜出场角色的名字，从上面对 characters 里选"]',
     '  }]',
@@ -328,6 +330,9 @@ function planSystemPrompt(shotCount, duration) {
     '13. performance 只准写「先做什么 → 停在哪里 → 最后做什么」的可拍动作序列，例如「把硬币推进去，手指停在投币口，又抽回来」。禁止「他很悲伤」「内心挣扎」「若有所思」这类形容词。',
     '14. 每镜的 performance 必须是这一镜独有的微动作，不能 21 镜重复同一个「低头」。至少要有三镜是「手比脸更早说话」：先拍手、再拍脸。',
     '15. objective 用动词短语，并且每镜都要和上一镜不同或相反——人物在整支片子里必须有方向感。',
+    '16. props 必须有 3–5 个，是有实体的东西（指骨、红绳、灯、硬币），不许写"回忆""命运"这类抽象词。',
+    '17. 每个 prop 至少要被 2 个镜头真正用到（拿、放、藏、舔、递），最后一镜必须回到 props 里的第一个物件。',
+    '18. 每镜的 prop 只能选一个，并且必须真的出现在 action 里。',
     '',
     '故事规则（这条不过，画面再美也是垃圾）：',
     'A. 必须有一个「转折点」：观众在前半段以为是这件事，后半段发现是另一件事。用一句话能说清，不靠旁白解释。',
@@ -358,6 +363,7 @@ function planScriptPrompt(duration) {
     '  "style": "曲风（英文更稳）：流派、乐器、人声、情绪、速度",',
     '  "look": "视觉基调一句话，只写画面：胶片感/调色/镜头/光线",',
     '  "characters": [{ "name": "2-4 字", "look": "年龄性别、发型发色、五官、服装配饰" }],',
+    '  "props": [{ "name": "物件名（2-4 字）", "meaning": "它怎么变意思：开场是…，中间变成…，最后一镜成了…" }],',
     '  "lyrics": "完整歌词，[Verse] [Chorus] [Bridge] 分段，每句一行",',
     '  "scenes": [{',
     '    "no": "场号",',
@@ -376,7 +382,8 @@ function planScriptPrompt(duration) {
     '4. 最后一镜必须重新定义前面：同一个物件或动作，看完最后一镜前面的意思变了。',
     '5. 歌词要能唱（副歌重复、句子短、押韵），且不要复述画面——画面在做事，歌词在说别的事。',
     '6. characters 写 1–2 个，外形要能画出定妆图。',
-    '7. 这一轮不要输出 shots 字段。',
+    '7. props 写 3–5 个有实体的物件，每个都要说清它怎么变意思；最后一镜必须回到第一个物件。',
+    '8. 这一轮不要输出 shots 字段。',
   ].join('\n');
 }
 
@@ -402,6 +409,7 @@ function shotsPrompt(count, from, to, part, total) {
     '  "action": "人物做什么：身体动作 + 表情 + 与环境的关系",',
     '  "performance": "这一镜独有的微动作：手/眼/呼吸怎么变",',
     '  "objective": "这一镜人物想要什么（动词短语）",',
+    '  "prop": "这一镜的关键物件（从剧本 props 里选一个，必须出现在 action 里）",',
     '  "dialogue": "要张口唱的那一句（从歌词原样摘）",',
     '  "cast": ["出场角色名"] }',
     '',
@@ -438,6 +446,51 @@ function shotBatches(shotCount, duration) {
   return out;
 }
 
+/**
+ * 体检里「末镜回扣开场物件」不过时，只重写最后一镜把它补上。
+ * 这是结构硬伤里最容易自动修的一项，修完再体检一次。
+ */
+async function repairBookend(ctx, plan) {
+  try {
+    const before = lintPlan(plan);
+    const check = before.checks.find((c) => c.id === 'bookend');
+    const first = (plan.props || [])[0];
+    if (!check || check.ok || !first || !plan.shots.length) return plan;
+
+    const last = plan.shots[plan.shots.length - 1];
+    const system = [
+      '你是电影分镜师。只重写整部片的最后一镜，让它回扣开场物件，其余字段一律不动。',
+      '只输出一个 JSON 对象，不要解释、不要 markdown。',
+    ].join('\n');
+    const user = [
+      `全片：${plan.title}｜${plan.duration} 秒｜${plan.shots.length} 镜`,
+      `物件母题：${(plan.props || []).map((p) => `${p.name}（${p.meaning}）`).join('；')}`,
+      `最后一镜必须回到：${first.name}`,
+      `当前最后一镜：${JSON.stringify(last)}`,
+      '要求：index/start/end/section/beat/size/move/angle/light/depth/transition 全部保持不变；',
+      `只改 label/action/performance/objective/prop/dialogue；action 里要出现「${first.name}」的实体动作；`,
+      '表演仍要写成「先做→停在哪→最后做什么」，不要情绪形容词。',
+      `输出：{"label":"…","action":"…","performance":"…","objective":"…","prop":"${first.name}","dialogue":"…"}`,
+    ].join('\n');
+
+    const { text: raw } = await llmText(ctx, system, user, { maxTokens: 900, timeoutMs: 90000 });
+    const patch = parsePlanJson(raw);
+    if (!patch || !patch.action) return plan;
+
+    const merged = { ...last };
+    for (const key of ['label', 'action', 'performance', 'objective', 'prop', 'dialogue']) {
+      if (patch[key] && String(patch[key]).trim()) merged[key] = String(patch[key]).trim();
+    }
+    if (!String(merged.prop || '').includes(first.name) && !String(merged.action).includes(first.name)) {
+      merged.prop = first.name;
+    }
+    const shots = plan.shots.slice(0, -1).concat(merged);
+    return { ...plan, shots };
+  } catch {
+    return plan;
+  }
+}
+
 async function generatePlan(ctx, params) {
   const duration = Math.min(LIMITS.songMaxSeconds, Math.max(LIMITS.songMinSeconds, Number(params.duration) || 60));
   const shotCount = Math.max(1, Math.min(LIMITS.maxShots, Number(params.shotCount) || suggestShotCount(duration)));
@@ -455,8 +508,8 @@ async function generatePlan(ctx, params) {
   if (shotCount <= 10) {
     const { text: raw, model } = await llmText(ctx, planSystemPrompt(shotCount, duration), userLines.join('\n'), { maxTokens: 6000 });
     const data = parsePlanJson(raw);
-    const plan = normalizePlan(data, { duration, shotCount });
-    return { plan, model, raw };
+    const plan = await repairBookend(ctx, normalizePlan(data, { duration, shotCount }));
+    return { plan, model, raw, lint: lintPlan(plan) };
   }
 
   // 长片（>10 镜）：先出剧本骨架，再分批补分镜——一次输出 21 镜会被截断
@@ -480,6 +533,7 @@ async function generatePlan(ctx, params) {
         arc: head.arc,
         ending: head.ending,
         characters: head.characters,
+        props: head.props,
         lyrics: head.lyrics,
       }, null, 1),
     ].filter(Boolean).join('\n\n');
@@ -488,8 +542,8 @@ async function generatePlan(ctx, params) {
     if (Array.isArray(part && part.shots)) shots.push(...part.shots);
   }
   if (!shots.length) throw new Error('分镜生成失败：模型返回里没有 shots');
-  const plan = normalizePlan({ ...head, shots }, { duration, shotCount });
-  return { plan, model, raw: rawHead };
+  const plan = await repairBookend(ctx, normalizePlan({ ...head, shots }, { duration, shotCount }));
+  return { plan, model, raw: rawHead, lint: lintPlan(plan) };
 }
 
 /* ---------------------------- 主流程 ---------------------------- */
@@ -1009,16 +1063,22 @@ export function apply(ctx) {
     output: OUTPUT,
     timeoutMs: 240000,
     async execute(args) {
-      const { plan, model } = await generatePlan(ctx, args);
+      const { plan, model, lint } = await generatePlan(ctx, args);
       const story = plan.story || {};
       const lines = [
         `《${plan.title}》 · ${plan.duration}s · ${plan.shotCount} 个镜头 · ${model}`,
+        lint ? `剧本体检：${lint.score} 分（${lint.passed}/${lint.total}）` : '',
+        ...(lint ? lint.checks.map((c) => `  ${c.ok ? '✓' : '✗'} ${c.label}：${c.detail}`) : []),
+        '',
         story.logline ? `故事：${story.logline}` : '',
         story.arc ? `情绪：${story.arc}` : '',
         story.ending ? `结尾：${story.ending}` : '',
         story.notes ? `阐述：${story.notes}` : '',
         `曲风：${plan.style}`,
         `主角：${plan.character}`,
+        '',
+        (plan.props && plan.props.length) ? '物件母题：' : '',
+        ...(plan.props || []).map((p) => `  ${p.name}：${p.meaning}`),
         '',
         '剧本（场次体）：',
         ...(plan.scenes || []).map((s) => [
@@ -1035,6 +1095,7 @@ export function apply(ctx) {
           `   镜头：${cameraSummary(s)} ｜ 转场：${s.transition || '—'}`,
           `   场景：${s.scene || '—'}${s.time ? `（${s.time}）` : ''}`,
           `   动作：${s.action || '—'}`,
+          s.prop ? `   物件：${s.prop}` : '',
           s.performance ? `   表演：${s.performance}` : '',
           s.objective ? `   他要：${s.objective}` : '',
         ].filter(Boolean).join('\n')),
@@ -1193,8 +1254,8 @@ export function apply(ctx) {
           return;
         }
         try {
-          const { plan, model } = await generatePlan(ctx, body);
-          sendJson(response, 200, { plan, model });
+          const { plan, model, lint } = await generatePlan(ctx, body);
+          sendJson(response, 200, { plan, model, lint });
         } catch (error) {
           sendJson(response, 502, { error: 'plan_failed', message: friendlyError(error) });
         }

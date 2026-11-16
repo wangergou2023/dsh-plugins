@@ -184,6 +184,7 @@ export function normalizePlan(data, opts = {}) {
       // 表演层：影帝级 MV 靠这个，不靠"他很悲伤"这种形容词
       performance: text(src.performance || src.microAction || src.acting),
       objective: text(src.objective || src.want),
+      prop: text(src.prop || src.object || src.item),
       dialogue: text(src.dialogue),
       cast: Array.isArray(src.cast)
         ? src.cast.map((x) => String(x || '').trim()).filter(Boolean)
@@ -224,6 +225,15 @@ export function normalizePlan(data, opts = {}) {
     // 视觉基调：只喂画面（胶片感、调色、镜头），和曲风分开
     look: String((data && (data.look || data.visualStyle)) || '').trim(),
     negative: String((data && data.negative) || '').trim(),
+    // 物件母题：一支 MV 靠 3–5 个重复出现的道具咬合，而不是靠"情绪"
+    props: Array.isArray(data && data.props)
+      ? data.props
+        .map((p) => ({
+          name: String((p && (p.name || p.prop || p.object)) || '').trim(),
+          meaning: String((p && (p.meaning || p.shift || p.arc)) || '').trim(),
+        }))
+        .filter((p) => p.name)
+      : [],
     // 场次体剧本：面板和 markdown 都按这个渲染，不再是"一句话故事"
     scenes: Array.isArray(data && data.scenes)
       ? data.scenes
@@ -291,6 +301,7 @@ export function composeFramePrompt(plan, shot) {
   if (shot.scene) parts.push(shot.scene);
   if (shot.time) parts.push(shot.time);
   if (shot.action) parts.push(shot.action);
+  if (shot.prop) parts.push(`画面里出现${shot.prop}`);
   parts.push(cameraFragment(shot));
   if (shot.beat) parts.push(`情绪：${shot.beat}`);
   // 只喂视觉基调；曲风是给 YuE2 的，塞进画面提示词只会把画面带偏
@@ -583,4 +594,99 @@ export function mimeOf(file) {
   if (ext === '.ogg' || ext === '.opus') return 'audio/ogg';
   if (ext === '.wav') return 'audio/wav';
   return 'application/octet-stream';
+}
+
+
+/* --------------------------- 剧本体检 --------------------------- */
+
+/**
+ * 把「这支 MV 好不好」变成可数的检查项。
+ * 全部是结构指标，不需要看画面：用户可以只凭这些判断剧本该不该开拍。
+ */
+export function lintPlan(plan) {
+  const shots = Array.isArray(plan && plan.shots) ? plan.shots : [];
+  const props = Array.isArray(plan && plan.props) ? plan.props : [];
+  const checks = [];
+  const push = (id, label, ok, detail) => checks.push({ id, label, ok: !!ok, detail: String(detail || '') });
+
+  // 1. 每镜齐活：表演 / 目标 / 唱词
+  const missingPerf = shots.filter((s) => !s.performance).length;
+  const missingWant = shots.filter((s) => !s.objective).length;
+  push('complete', '每镜都有表演和目的', missingPerf === 0 && missingWant === 0,
+    missingPerf || missingWant ? `${missingPerf} 镜缺表演，${missingWant} 镜缺目的` : `${shots.length} 镜齐全`);
+
+  // 2. 表演不重复：任意两镜不能共用同一个开头
+  const heads = shots.map((s) => String(s.performance || '').replace(/[，,。；;、\s]/g, '').slice(0, 8));
+  const dup = heads.filter((h, i) => h.length >= 4 && heads.indexOf(h) !== i);
+  push('perf-dup', '表演不重复', dup.length === 0,
+    dup.length ? `${dup.length} 镜的表演开头重复（${dup.slice(0, 3).join('、')}）` : '每镜微动作都不同');
+
+  // 3. 景别不三连
+  const sizes = shots.map((s) => s.size || '');
+  let sizeRun = 0; let worstSize = 0;
+  for (let i = 0; i < sizes.length; i += 1) {
+    sizeRun = i && sizes[i] === sizes[i - 1] ? sizeRun + 1 : 1;
+    worstSize = Math.max(worstSize, sizeRun);
+  }
+  push('size-run', '景别有节奏（不三连）', worstSize < 3, `最长连续同景别 ${worstSize} 镜`);
+
+  // 4. 运镜不三连
+  const moves = shots.map((s) => s.move || '');
+  let moveRun = 0; let worstMove = 0;
+  for (let i = 0; i < moves.length; i += 1) {
+    moveRun = i && moves[i] === moves[i - 1] ? moveRun + 1 : 1;
+    worstMove = Math.max(worstMove, moveRun);
+  }
+  push('move-run', '运镜不三连', worstMove < 3, `最长连续同运镜 ${worstMove} 镜`);
+
+  // 5. 物件母题：至少 3 个，每个被 ≥2 镜引用
+  const text = shots.map((s) => `${s.action || ''} ${s.prop || ''}`).join(' ');
+  const used = props.map((p) => ({ name: p.name, hits: shots.filter((s) => `${s.prop || ''} ${s.action || ''}`.includes(p.name)).length }));
+  const weak = used.filter((u) => u.hits < 2);
+  push('props', '物件母题重复咬合', props.length >= 3 && weak.length === 0 && text.length > 0,
+    props.length < 3 ? `只有 ${props.length} 个物件，至少要 3 个` : (weak.length ? `${weak.map((u) => u.name).join('、')} 只出现一次` : `${used.map((u) => `${u.name}×${u.hits}`).join('　')}`));
+
+  // 6. 首尾回扣：最后一镜要用到第一个物件
+  const firstProp = props.length ? props[0].name : '';
+  const lastShot = shots[shots.length - 1] || {};
+  const bookend = firstProp && `${lastShot.prop || ''} ${lastShot.action || ''}`.includes(firstProp);
+  push('bookend', '最后一镜回扣开场物件', bookend, bookend ? `末镜回到「${firstProp}」` : `末镜没有回到「${firstProp || '（无物件）'}」`);
+
+  // 7. 歌词不复述画面
+  const overlap = shots.filter((s) => {
+    const lyric = String(s.dialogue || '').replace(/[，,。；;、\s]/g, '');
+    const act = String(s.action || '').replace(/[，,。；;、\s]/g, '');
+    if (!lyric || !act) return false;
+    let hit = 0;
+    for (let i = 0; i < lyric.length - 1; i += 1) if (act.includes(lyric.slice(i, i + 2))) hit += 1;
+    return hit / Math.max(1, lyric.length - 1) > 0.6;
+  });
+  push('lyric-offset', '歌词与画面错位', overlap.length === 0,
+    overlap.length ? `${overlap.length} 镜的唱词在复述画面` : '歌词在说别的事');
+
+  // 8. 动作长度可执行（12–90 字）
+  const badLen = shots.filter((s) => {
+    const n = String(s.action || '').trim().length;
+    return n < 12 || n > 90;
+  });
+  push('action-len', '动作长度可执行', badLen.length === 0,
+    badLen.length ? `${badLen.length} 镜的动作过短或过长` : '12–90 字之间');
+
+  // 9. 空镜数量受控
+  const empty = shots.filter((s) => !(Array.isArray(s.cast) && s.cast.length)).length;
+  push('empty-shot', '空镜不超过 2 个', empty <= 2, `${empty} 个空镜`);
+
+  // 10. 时间轴连续
+  let gap = 0;
+  for (let i = 1; i < shots.length; i += 1) if (Math.abs(shots[i].start - shots[i - 1].end) > 0.01) gap += 1;
+  push('timeline', '时间轴连续', gap === 0, gap ? `${gap} 处断裂` : `${shots.length} 镜无空洞`);
+
+  const passed = checks.filter((c) => c.ok).length;
+  const total = checks.length || 1;
+  return {
+    score: Math.round((passed / total) * 100),
+    passed,
+    total,
+    checks,
+  };
 }

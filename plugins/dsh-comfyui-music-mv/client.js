@@ -99,6 +99,7 @@ window.__ModuleLoader__.load({
       const [error, setError] = React.useState('');
       const [openShot, setOpenShot] = React.useState(null);
       const [scriptOpen, setScriptOpen] = React.useState(true);
+      const [lint, setLint] = React.useState(null);
       const [bust, setBust] = React.useState(0);
       const [nowTime, setNowTime] = React.useState(0);
       const audioRef = React.useRef(null);
@@ -166,6 +167,7 @@ window.__ModuleLoader__.load({
         try {
           const data = await post('/api/comfyui-music-mv/plan', { theme: cfg.theme, duration: cfg.duration, style: cfg.style });
           setPlan(data.plan);
+          setLint(data.lint || null);
         } catch (err) {
           setError(String((err && err.message) || err));
         } finally { setBusy(''); }
@@ -458,6 +460,22 @@ window.__ModuleLoader__.load({
               h('div', { style: { fontSize: '15px', fontWeight: 600 } }, '《' + (plan.title || '未命名') + '》'),
               h('span', { style: muted }, plan.duration + 's · ' + (plan.shots || []).length + ' 镜')
             ),
+            lint ? h('div', { style: { marginTop: '6px', display: 'flex', gap: '5px', flexWrap: 'wrap', alignItems: 'center' } },
+              h('span', {
+                style: { fontSize: '12px', fontWeight: 600, marginRight: '2px',
+                  color: lint.score >= 85 ? '#4a9d63' : (lint.score >= 70 ? '#c9a45c' : '#c0574f') },
+              }, '剧本体检 ' + lint.score),
+              ...lint.checks.map(function (c, i) {
+                return h('span', {
+                  key: 'lk' + i, title: c.label + '：' + c.detail,
+                  style: {
+                    fontSize: '11px', padding: '1px 6px', borderRadius: '9px', cursor: 'help',
+                    border: '1px solid ' + (c.ok ? 'rgba(74,157,99,0.45)' : 'rgba(192,87,79,0.55)'),
+                    color: c.ok ? 'rgba(74,157,99,0.95)' : 'rgba(192,87,79,0.98)',
+                  },
+                }, (c.ok ? '✓ ' : '✗ ') + c.label);
+              })
+            ) : null,
             plan.story && plan.story.logline ? h('div', { style: { ...small, marginTop: '4px' } }, '故事：' + plan.story.logline) : null,
             plan.story && plan.story.arc ? h('div', { style: muted }, '情绪：' + plan.story.arc) : null,
             (plan.scenes && plan.scenes.length)
