@@ -760,13 +760,17 @@ export function composeFramePrompt(plan, shot) {
         ? '视线落在另一个角色身上（脸或手），不看镜头'
         : (/找|看|望|寻|凝视|盯着|抬头|低头/.test(`${shot.action || ''} ${shot.performance || ''} ${shot.objective || ''}`)
           ? '视线看向画外的一个具体方向，不看镜头'
-          : '视线落在手里的东西上，不看镜头'));
+          : (beastBody ? '视线落在爪边的东西上，不看镜头' : '视线落在手里的东西上，不看镜头')));
     if (eyeline) parts.push(eyeline);
-    parts.push('捕捉动作正在进行到一半的瞬间（不是摆拍），表情具体、有微小的肌肉动作');
+    parts.push(beastBody
+      ? '捕捉动作正在进行到一半的瞬间（不是摆拍），毛发与肌肉有具体的动作'
+      : '捕捉动作正在进行到一半的瞬间（不是摆拍），表情具体、有微小的肌肉动作');
   }
   // 服装护栏：Krea2 很容易把人形画成赤膊（定妆里写了"穿…"照样脱），
   // 把衣服单独拎出来在镜头描述之后再说一遍，命中最稳。
-  if (!insertShot && cast.length && !beastShot) {
+  // 但本体镜（含同框单角色）绝对不能走这条路——这行字等于命令模型"给狗穿上皮夹克"，
+  // 实测第 8 格就是这么变成"四腿着地的狗穿着皮夹克和牛仔裤"的。
+  if (!insertShot && cast.length && !beastBody) {
     const wardrobe = cast.map((c) => {
       const human = splitLook(c.look).human || '';
       const garment = (human.match(/穿([^，。；]+)/) || [])[1];
