@@ -562,7 +562,7 @@ async function generatePlan(ctx, params) {
   if (shotCount <= 10) {
     const { text: raw, model } = await llmText(ctx, planSystemPrompt(shotCount, duration), userLines.join('\n'), { maxTokens: 6000 });
     const data = parsePlanJson(raw);
-    const plan = mergeScenes(await repairBookend(ctx, await addWarmBeat(ctx, trimLongActions(relieveSilence(breakLyricDup(extendSilentBeat(normalizePlan(data, { duration, shotCount }))))))));
+    const plan = mergeScenes(await repairBookend(ctx, trimLongActions(await addWarmBeat(ctx, relieveSilence(breakLyricDup(extendSilentBeat(normalizePlan(data, { duration, shotCount }))))))));
     return { plan, model, raw, lint: lintPlan(plan) };
   }
 
@@ -596,7 +596,7 @@ async function generatePlan(ctx, params) {
     if (Array.isArray(part && part.shots)) shots.push(...part.shots);
   }
   if (!shots.length) throw new Error('分镜生成失败：模型返回里没有 shots');
-  const plan = mergeScenes(await repairBookend(ctx, await addWarmBeat(ctx, trimLongActions(relieveSilence(breakLyricDup(extendSilentBeat(normalizePlan({ ...head, shots }, { duration, shotCount }))))))));
+  const plan = mergeScenes(await repairBookend(ctx, trimLongActions(await addWarmBeat(ctx, relieveSilence(breakLyricDup(extendSilentBeat(normalizePlan({ ...head, shots }, { duration, shotCount }))))))));
   return { plan, model, raw: rawHead, lint: lintPlan(plan) };
 }
 
@@ -768,6 +768,10 @@ async function addWarmBeat(ctx, plan) {
   const target = inWindow.slice().sort((a, b) => score(b) - score(a))[0];
   const prev = shots[target.index - 1];
   const next = shots[target.index + 1];
+  const twist = plan.twist || {};
+  const twistShot = shots[(Number(twist.atIndex) || 0) - 1];
+  const keyProp = String((twistShot && twistShot.prop) || '').trim()
+    || String((Array.isArray(plan.props) && plan.props[0] && plan.props[0].name) || '').trim();
   const user = [
     `片名：《${plan.title}》　一句话：${plan.story && plan.story.logline}`,
     `全片情绪曲线：${(plan.story && plan.story.arc) || '（未写）'}`,
@@ -779,7 +783,11 @@ async function addWarmBeat(ctx, plan) {
     }, null, 1),
     `上一镜结尾：${prev ? String(prev.action || '').slice(-40) : '（无）'}`,
     `下一镜开始：${next ? String(next.action || '').slice(0, 40) : '（无）'}`,
-  ].join('\n');
+    twist.what ? `全片在第 ${twist.atIndex} 镜揭示：${twist.what}` : '',
+    keyProp
+      ? `硬性要求：这一镜笑的时候，人物手里必须拿着「${keyProp}」——观众后来才知道这就是第 ${twist.atIndex} 镜揭示的东西。笑过它，再被它反咬。`
+      : '',
+  ].filter(Boolean).join('\n');
   const { text: raw } = await llmText(ctx, WARM_SYSTEM, user, { maxTokens: 500 });
   const data = parsePlanJson(raw);
   const action = String((data && data.action) || '').trim();
@@ -788,6 +796,9 @@ async function addWarmBeat(ctx, plan) {
   const out = JSON.parse(JSON.stringify(plan));
   out.shots[target.index].action = action;
   out.shots[target.index].performance = performance;
+  if (keyProp && (action.includes(keyProp) || performance.includes(keyProp))) {
+    out.shots[target.index].prop = keyProp;
+  }
   return out;
 }
 

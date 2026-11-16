@@ -147,6 +147,18 @@ export function allocateRhythmTimeline(duration, meta = []) {
     return { ...m, repeats: key ? freq.get(key) || 1 : 1 };
   });
   const weights = metaWithCount.map((m, i) => weightOf(m) * (1 + 0.12 * Math.sin(i * 1.9)));
+
+  // 模型常把 21 镜全写成 Verse（或全空）→ 权重全一样 → 每镜等长，看起来很业余。
+  // 这时用一条内置的"家传节奏曲线"：长短交替，重音落在每 4 镜的头一镜。
+  const distinct = new Set(metaWithCount.map((m) => String(m.section || '').trim()).filter(Boolean));
+  const flat = distinct.size <= 1;
+  if (flat) {
+    for (let i = 0; i < weights.length; i += 1) {
+      const accent = i % 4 === 0 ? 1.35 : (i % 4 === 2 ? 0.72 : 1);
+      const breathe = 0.85 + 0.3 * ((i * 7) % 5) / 4;
+      weights[i] = accent * breathe;
+    }
+  }
   const MIN = LIMITS.shotMinSeconds;
   const MAX = LIMITS.shotMaxSeconds;
   const lens = new Array(n).fill(0);
@@ -1043,6 +1055,29 @@ export function lintPlan(plan) {
     .filter((x) => x.hit && x.i / Math.max(1, shots.length - 1) >= 0.18 && x.i / Math.max(1, shots.length - 1) <= 0.68);
   push('contrast', '中段有一处真的放松', warmIdx.length >= 1,
     warmIdx.length ? `第 ${warmIdx.map((x) => x.i + 1).join('、')} 镜有正向瞬间` : '全片一直压着，观众会麻');
+
+  // 16. 笑必须和揭示咬在同一件东西上：笑声里手里的东西 = 后来揭示的东西
+  const twistShot = shots[twistAt - 1];
+  const twistProp = String((twistShot && twistShot.prop) || '').trim();
+  const warmShot = warmIdx.length ? shots[warmIdx[0].i] : null;
+  let warmLink = true;
+  let warmLinkDetail = '还没有放松镜，先说笑在哪里';
+  if (warmShot) {
+    const pool = [
+      String(warmShot.prop || ''),
+      String(warmShot.action || ''),
+      String(warmShot.performance || ''),
+      String(warmShot.stillFrame || ''),
+    ].join(' ');
+    const probe = twistProp || (Array.isArray(plan.props) && plan.props[0] && plan.props[0].name) || '';
+    warmLink = Boolean(probe) && pool.includes(probe);
+    warmLinkDetail = probe
+      ? (warmLink
+        ? `第 ${warmShot.index + 1} 镜笑的时候手里是「${probe}」，正是第 ${twistAt} 镜揭示的那件东西`
+        : `第 ${warmShot.index + 1} 镜笑时手上没有「${probe}」，笑声和揭示断开——笑过的东西要成为后面揭示的东西`)
+      : '没有可以绑定的物件（props 为空）';
+  }
+  push('warm-link', '笑和揭示咬在同一件东西上', warmLink, warmLinkDetail);
 
   // 16. 场次体：场次不等于镜头，21 镜写 21 场说明这是分镜表不是剧本
   const sceneCount = Array.isArray(plan && plan.scenes) ? plan.scenes.length : 0;
