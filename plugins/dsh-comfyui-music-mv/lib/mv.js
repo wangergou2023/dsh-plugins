@@ -348,6 +348,16 @@ export function composeFramePrompt(plan, shot) {
   if (shot.prop && !String(shot.action || '').includes(shot.prop)) parts.push(`画面里出现${shot.prop}`);
   parts.push(cameraFragment(shot));
   if (shot.beat) parts.push(`情绪：${shot.beat}`);
+  // 服装护栏：Krea2 很容易把人形画成赤膊（定妆里写了"穿…"照样脱），
+  // 把衣服单独拎出来在镜头描述之后再说一遍，命中最稳。
+  if (cast.length && !beastShot) {
+    const wardrobe = cast.map((c) => {
+      const human = splitLook(c.look).human || '';
+      const garment = (human.match(/穿([^，。；]+)/) || [])[1];
+      return garment ? `${c.name}：${garment}` : '';
+    }).filter(Boolean).join('；');
+    if (wardrobe) parts.push(`角色全程穿着（服装完整，不要赤膊、不要裸上身）：${wardrobe}`);
+  }
   // 只喂视觉基调；曲风是给 YuE2 的，塞进画面提示词只会把画面带偏
   if (plan.look) parts.push(plan.look);
   parts.push('电影剧照，人物与场景细节清晰，不要文字、不要水印');

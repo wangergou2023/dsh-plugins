@@ -833,8 +833,16 @@ async function execute(job, params) {
     song: { file: savedSong, name: songName, duration: songDuration, estimated: !!songInfo.estimated },
   });
 
-  /* 3. 按真实歌长重排时间轴：歌是 YuE2 生成的，实际长度和请求值不一定一样 */
-  plan = normalizePlan(plan, { duration: songDuration, shotCount: params.shotCount });
+  /* 3. 按真实歌长重排时间轴：歌是 YuE2 生成的，实际长度和请求值不一定一样。
+     注意别把镜头数也交给 suggestShotCount 重算：歌短了会连带砍掉后面的镜头，
+     结尾那一镜（回扣）会被悄悄扔掉。这里锁死原来的镜头数。 */
+  const keepCount = Number(params.shotCount) || (plan.shots ? plan.shots.length : 0) || undefined;
+  const wantedDuration = plan.duration;
+  plan = normalizePlan(plan, { duration: songDuration, shotCount: keepCount });
+  const songShort = wantedDuration && songDuration < wantedDuration - 1;
+  await jobPatch(job.id, songShort ? {
+    songWarning: `歌只出了 ${songDuration.toFixed(1)}s（要 ${wantedDuration}s），时间轴已按真实歌长压缩成每镜 ${(songDuration / Math.max(1, plan.shots.length)).toFixed(1)}s`,
+  } : { songWarning: null });
   // 续跑时不能把已经出好的静帧/视频冲掉：按 index 把运行时产物接回来
   const existing = new Map((job.shots || []).map((s) => [s.index, s]));
   const shots = plan.shots.map((shot) => {
