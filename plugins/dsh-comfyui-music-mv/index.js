@@ -1,4 +1,4 @@
-﻿/**
+/**
  * dsh-comfyui-music-mv —— 音乐 MV 生成插件。
  *
  * 一条链：出歌（YuE2）→ 主角定妆图（Krea2）→ 每镜头 5–15s 视频（MiniMax H3）
@@ -20,7 +20,7 @@ import {
   LIMITS, audioDuration, buildFramePrompt, buildShotVideoPrompt, buildTailFramePrompt,
   buildSliceAudioPrompt, buildStitchPrompt, fetchVideo, fetchComfyImage, fetchComfyAudio,
   firstOutputImage, saveVideo, saveFrame, normalizePlan, parsePlanJson, suggestShotCount,
-  charactersOf, castOf, lintPlan, segmentLyrics, composeFramePrompt, splitLook, extendSilentBeat, breakLyricDup,
+  charactersOf, castOf, lintPlan, segmentLyrics, composeFramePrompt, splitLook, extendSilentBeat, breakLyricDup, heroFormSpecs,
 } from './lib/mv.js';
 import { vocab, cameraSummary } from './lib/shotlang.js';
 import { probeFfmpeg, stitchWithTransitions, concatAudio } from './lib/ffmpeg.js';
@@ -755,6 +755,54 @@ async function refTemplate() {
   return refTemplateCache;
 }
 
+/**
+ * 给一个角色出定妆图。按形态拆成「原形」「人形」两张：
+ * 以前把「犬…幻化人形时是少年…」整句喂进去，模型会揉成「长着狗耳朵的少年」。
+ */
+async function renderHero(client, job, plan, character, index, params) {
+  const specs = heroFormSpecs(character.look).slice(0, 2);
+  const entry = { label: character.name, look: character.look };
+  for (const spec of specs) {
+    const heroPrompt = [
+      spec.text || character.name || '一位年轻人',
+      spec.guard,
+      plan.style ? `风格：${plan.style}` : '',
+      '电影感写真，纯色深灰背景，不要文字，不要拼图',
+    ].filter(Boolean).join('，');
+    const built = await buildT2iPrompt({
+      prompt: heroPrompt,
+      aspectRatio: params.heroAspect || '1:1 (Square)',
+      megapixels: 1.0,
+      steps: params.heroSteps || 8,
+      filenamePrefix: `mv_hero/${job.id}_${index + 1}_${spec.form}`,
+    });
+    applyModelOverrides(built.prompt, params.models);
+    const promptId = await client.submit(built.prompt);
+    const result = await client.wait(promptId, 1800000);
+    const item = firstOutputImage(result, '29');
+    if (!item) throw new Error(`${character.name} 的定妆图没有产出`);
+    const buffer = await fetchComfyImage(client, item);
+    await fs.mkdir(path.join(DATA_DIR, job.id), { recursive: true });
+    const stamp = Date.now().toString(36);
+    const isHuman = spec.form === 'human';
+    const heroFile = path.join(DATA_DIR, job.id, `hero_${index + 1}${isHuman ? '_human' : ''}_${stamp}.png`);
+    await fs.writeFile(heroFile, buffer);
+    const comfy = await client.upload(buffer, `mv_hero${isHuman ? '_h' : ''}_${job.id}_${index + 1}_${stamp}.png`, 'image/png');
+    if (isHuman) {
+      entry.humanFile = heroFile;
+      entry.humanComfy = comfy;
+    } else {
+      entry.file = heroFile;
+      entry.comfy = comfy;
+    }
+    if (!entry.file) {
+      entry.file = heroFile;
+      entry.comfy = comfy;
+    }
+  }
+  return entry;
+}
+
 async function renderFrame(client, job, plan, shot, params) {
   // 有定妆图就走"认人"链路：Qwen 参考编辑，角色长相全片锁死
   const sceneText = composeFramePrompt(plan, shot);
@@ -1080,31 +1128,8 @@ async function execute(job, params) {
     heroes = [{ label: c.name, look: c.look, comfy, file: null }];
   } else if (params.autoHero !== false) {
     for (let i = 0; i < castList.length; i += 1) {
-      const c = castList[i];
-      const heroPrompt = [
-        c.look || c.name || '一位年轻人',
-        '单人半身肖像，正面看镜头，五官清晰，光线均匀',
-        plan.style ? `风格：${plan.style}` : '',
-        '电影感写真，纯色浅背景，不要文字',
-      ].filter(Boolean).join('，');
-      const built = await buildT2iPrompt({
-        prompt: heroPrompt,
-        aspectRatio: params.heroAspect || '1:1 (Square)',
-        megapixels: 1.0,
-        steps: params.heroSteps || 8,
-        filenamePrefix: `mv_hero/${job.id}_${i + 1}`,
-      });
-      applyModelOverrides(built.prompt, params.models);
-      const promptId = await client.submit(built.prompt);
-      const entry = await client.wait(promptId, 1800000);
-      const item = firstOutputImage(entry, '29');
-      if (!item) throw new Error(`${c.name} 的定妆图没有产出`);
-      const buffer = await fetchComfyImage(client, item);
-      await fs.mkdir(path.join(DATA_DIR, job.id), { recursive: true });
-      const heroFile = path.join(DATA_DIR, job.id, `hero_${i + 1}.png`);
-      await fs.writeFile(heroFile, buffer);
-      const comfy = await client.upload(buffer, `mv_hero_${job.id}_${i + 1}.png`, 'image/png');
-      heroes.push({ label: c.name, look: c.look, comfy, file: heroFile });
+      const entry = await renderHero(client, job, plan, castList[i], i, params);
+      heroes.push(entry);
       await jobPatch(job.id, { heroes });
     }
   }
@@ -1725,6 +1750,39 @@ export function apply(ctx) {
         } catch (error) {
           await jobStore.patchShot(id, index, { frameStatus: 'failed', error: friendlyError(error) });
           sendJson(response, 500, { error: 'frame_failed', message: friendlyError(error) });
+        }
+      },
+    }));
+
+    /** 重出定妆图：每个角色按「原形 / 人形」两张重生成，不动已经出好的静帧与视频。 */
+    disposers.push(webServer.register({
+      kind: 'exact',
+      path: '/api/comfyui-music-mv/heroes',
+      handler: async (request, response) => {
+        if (request.method !== 'POST') { sendJson(response, 405, { error: 'method_not_allowed' }); return; }
+        if (!sameOrigin(request)) { sendJson(response, 403, { error: 'forbidden: same-origin only' }); return; }
+        let body = null;
+        try { body = await readJsonBody(request); } catch { body = null; }
+        const id = String((body && body.id) || '');
+        const only = body && body.index !== undefined ? Number(body.index) : null;
+        await jobStore.refresh();
+        const job = jobStore.get(id);
+        if (!job) { sendJson(response, 404, { error: 'not_found', id }); return; }
+        const castList = charactersOf(job.plan);
+        if (!castList.length) { sendJson(response, 400, { error: 'no_characters' }); return; }
+        try {
+          const client = new ComfyClient();
+          if (!(await client.alive())) throw new Error('连不上 ComfyUI');
+          const heroes = Array.isArray(job.heroes) ? job.heroes.slice() : [];
+          for (let i = 0; i < castList.length; i += 1) {
+            if (only !== null && only !== i) continue;
+            const entry = await renderHero(client, job, job.plan, castList[i], i, job.params || {});
+            if (heroes[i]) heroes[i] = { ...heroes[i], ...entry }; else heroes[i] = entry;
+            await jobStore.patch(id, { heroes });
+          }
+          sendJson(response, 200, { ok: true, heroes });
+        } catch (error) {
+          sendJson(response, 500, { error: 'hero_failed', message: friendlyError(error) });
         }
       },
     }));

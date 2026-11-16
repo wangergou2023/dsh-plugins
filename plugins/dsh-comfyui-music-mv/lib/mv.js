@@ -363,6 +363,48 @@ export function splitLook(look) {
   return { beast, human: human || raw };
 }
 
+const BEAST_WORD = /犬|狗|骨|骨架|骷髅|兽|四爪|前爪|尾巴|摇尾|毛|爪/;
+const HUMAN_WORD = /人形|少年|少女|男子|女子|男人|女人|青年|少女|老者|孩童/;
+
+/**
+ * 一个角色要出几张定妆图：原形一张、人形一张。
+ * 以前只出一张、把「犬…幻化人形时是少年…」整句喂进去，模型会揉成「长着狗耳朵的少年」——
+ * 这里按形态拆开，各自带一句护栏，保证「狗就是狗、人就是人」。
+ */
+export function heroFormSpecs(look) {
+  const raw = String(look || '').trim();
+  if (!raw) return [{ form: 'human', text: '一位年轻人', guard: '单人半身肖像，正面看镜头，五官清晰' }];
+  const split = splitLook(raw);
+  const hadSplit = Boolean(split.beast);
+  if (hadSplit) {
+    return [
+      {
+        form: 'beast',
+        text: split.beast,
+        guard: '角色定妆照，只有这一个非人形态：动物或骨架本体，完整身形，画面里没有任何人类、没有人的脸、没有手臂、没有衣领、没有兽耳少年',
+      },
+      {
+        form: 'human',
+        text: split.human || raw,
+        guard: '角色定妆照，只有这一个人形：正常人类的头部与头发，画面里没有兽耳、没有尾巴、没有动物毛发、没有裸露的骨架',
+      },
+    ];
+  }
+  const beastOnly = BEAST_WORD.test(raw) && !HUMAN_WORD.test(raw);
+  if (beastOnly) {
+    return [{
+      form: 'beast',
+      text: raw,
+      guard: '角色定妆照，只有这一个非人形态：动物或骨架本体，完整身形，画面里没有任何人类、没有人的脸、没有手臂',
+    }];
+  }
+  return [{
+    form: 'human',
+    text: raw,
+    guard: '角色定妆照，只有这一个人形：正常人类的头部与头发，画面里没有兽耳、没有尾巴、没有动物毛发',
+  }];
+}
+
 /** 全片角色表：新的 characters 数组优先，旧的单 character 字段兜底。 */
 export function charactersOf(plan) {
   const list = Array.isArray(plan && plan.characters) ? plan.characters : [];
