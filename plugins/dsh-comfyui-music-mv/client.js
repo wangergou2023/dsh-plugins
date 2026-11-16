@@ -98,6 +98,7 @@ window.__ModuleLoader__.load({
       const [busy, setBusy] = React.useState('');
       const [error, setError] = React.useState('');
       const [openShot, setOpenShot] = React.useState(null);
+      const [scriptOpen, setScriptOpen] = React.useState(true);
       const [bust, setBust] = React.useState(0);
       const [nowTime, setNowTime] = React.useState(0);
       const audioRef = React.useRef(null);
@@ -431,6 +432,13 @@ window.__ModuleLoader__.load({
                   onChange: function (e) { saveShot(shot.index, { scene: e.target.value }); },
                   style: { width: '100%', resize: 'vertical', fontFamily: 'inherit', fontSize: '12px' },
                 }),
+                h('div', { style: { ...small, opacity: 0.65 } }, '表演（手/眼/呼吸的微动作，不是形容词）'),
+                h('textarea', {
+                  value: shot.performance || '', rows: 2,
+                  placeholder: '先做什么 → 停在哪里 → 最后做什么',
+                  onChange: function (e) { saveShot(shot.index, { performance: e.target.value }); },
+                  style: { width: '100%', resize: 'vertical', fontFamily: 'inherit', fontSize: '12px' },
+                }),
                 h('div', { style: { ...small, opacity: 0.65 } }, '动作（只写画面）'),
                 h('textarea', {
                   value: shot.action || '', rows: 3,
@@ -452,6 +460,39 @@ window.__ModuleLoader__.load({
             ),
             plan.story && plan.story.logline ? h('div', { style: { ...small, marginTop: '4px' } }, '故事：' + plan.story.logline) : null,
             plan.story && plan.story.arc ? h('div', { style: muted }, '情绪：' + plan.story.arc) : null,
+            (plan.scenes && plan.scenes.length)
+              ? h('div', { style: { marginTop: '10px' } },
+                  h('div', { style: { display: 'flex', alignItems: 'center', gap: '8px' } },
+                    h('div', { style: { ...muted, marginTop: '4px' } }, '剧本（' + plan.scenes.length + ' 场）'),
+                    h('button', {
+                      className: 'cfl-chip', style: { fontSize: '11px' },
+                      onClick: function () { setScriptOpen(!scriptOpen); },
+                    }, scriptOpen ? '收起剧本' : '展开剧本')
+                  ),
+                  scriptOpen ? h('div', {
+                    style: {
+                      maxHeight: '460px', overflowY: 'auto', marginTop: '4px',
+                      border: '1px solid rgba(128,128,128,0.18)', borderRadius: '8px', padding: '10px',
+                      background: 'rgba(128,128,128,0.03)',
+                    },
+                  },
+                    ...plan.scenes.map(function (s, i) {
+                      const perfStyle = { fontSize: '12.5px', marginTop: '3px', color: '#c9a45c', lineHeight: 1.5 };
+                      const actStyle = { fontSize: '12.5px', marginTop: '3px', lineHeight: 1.5 };
+                      return h('div', {
+                        key: 'sc' + i,
+                        style: i ? { marginTop: '10px', paddingTop: '9px', borderTop: '1px solid rgba(128,128,128,0.14)' } : null,
+                      },
+                        h('div', { style: { fontSize: '13px', fontWeight: 600 } }, '场' + (s.no || i + 1) + (s.heading ? '　' + s.heading : '')),
+                        s.action ? h('div', { style: actStyle }, s.action) : null,
+                        s.performance ? h('div', { style: perfStyle }, '表演｜' + s.performance) : null,
+                        s.sound ? h('div', { style: { ...muted, marginTop: '3px' } }, '声音｜' + s.sound) : null,
+                        s.lyric ? h('div', { style: { ...muted, marginTop: '2px', fontStyle: 'italic' } }, '唱｜' + s.lyric) : null
+                      );
+                    })
+                  ) : null
+                )
+              : null,
             h('div', { style: { ...muted, marginTop: '8px' } }, '角色（每个角色一张定妆图，全片复用）'),
             ...planCharacters().map(function (c, i) {
               const list = planCharacters();

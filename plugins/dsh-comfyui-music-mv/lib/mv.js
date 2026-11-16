@@ -181,6 +181,9 @@ export function normalizePlan(data, opts = {}) {
       dof: text(src.dof) || 'medium',
       transition: text(src.transition) || 'cut',
       action,
+      // 表演层：影帝级 MV 靠这个，不靠"他很悲伤"这种形容词
+      performance: text(src.performance || src.microAction || src.acting),
+      objective: text(src.objective || src.want),
       dialogue: text(src.dialogue),
       cast: Array.isArray(src.cast)
         ? src.cast.map((x) => String(x || '').trim()).filter(Boolean)
@@ -221,6 +224,22 @@ export function normalizePlan(data, opts = {}) {
     // 视觉基调：只喂画面（胶片感、调色、镜头），和曲风分开
     look: String((data && (data.look || data.visualStyle)) || '').trim(),
     negative: String((data && data.negative) || '').trim(),
+    // 场次体剧本：面板和 markdown 都按这个渲染，不再是"一句话故事"
+    scenes: Array.isArray(data && data.scenes)
+      ? data.scenes
+        .map((s, i) => {
+          const pickText = (v) => String(v || '').replace(/[ \t]+/g, ' ').trim();
+          return {
+            no: pickText(s && (s.no || s.number || s.index)) || String(i + 1),
+            heading: pickText(s && (s.heading || s.slug || s.title || s.location)),
+            action: pickText(s && (s.action || s.description || s.body)),
+            performance: pickText(s && (s.performance || s.beats || s.acting)),
+            sound: pickText(s && (s.sound || s.audio || s.sfx)),
+            lyric: pickText(s && (s.lyric || s.line || s.dialogue)),
+          };
+        })
+        .filter((s) => s.heading || s.action || s.performance || s.lyric)
+      : [],
     story: {
       logline: picks('logline', 'oneLine', 'premise'),
       arc: picks('arc', 'emotionArc', 'structure'),

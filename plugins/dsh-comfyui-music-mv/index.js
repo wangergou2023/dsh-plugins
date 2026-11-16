@@ -279,6 +279,14 @@ function planSystemPrompt(shotCount, duration) {
     '  "arc": "情绪曲线：起…（前奏）承…（主歌）转…（副歌爆发）合…（尾声）",',
     '  "ending": "结尾画面：最后一个镜头怎么收",',
     '  "notes": "导演阐述一两句：视觉基调、调色、为什么这么拍",',
+    '  "scenes": [{',
+    '    "no": "场号，例如 1",',
+    '    "heading": "场次标题：内景/外景 · 地点 · 时间（例如 外景 忘川渡口 夜 雨）",',
+    '    "action": "这一场发生什么：环境 + 人物的物理动作，写看得见的东西",',
+    '    "performance": "表演节拍：他的表层动作 → 中途的停顿/破绽 → 最后做的决定，三段用逗号连起来",',
+    '    "sound": "这场的声音：水声/风/电话铃/布料摩擦/心跳，写具体",',
+    '    "lyric": "这场落在哪句歌词（原样摘一句，没有就留空）"',
+    '  }],',
     '  "style": "曲风（英文更稳）：流派、乐器、人声、情绪、速度",',
     '  "look": "视觉基调一句话，只写画面：胶片感/数字感、调色、镜头类型、光线基调",',
     '  "characters": [{ "name": "角色名（短，2-4 字）", "look": "外形一句话：年龄性别、发型发色、五官特征、服装/铠甲/配饰" }],',
@@ -297,6 +305,8 @@ function planSystemPrompt(shotCount, duration) {
     '    "dof": "景深：extreme_shallow|shallow|medium|deep",',
     '    "transition": "怎么接下一镜：cut|dissolve|match|whip|fade",',
     '    "action": "人物在这一镜做什么，具体到身体动作与表情；不写歌词、不写镜头参数",',
+    '    "performance": "这一镜的表演细节：手/眼/呼吸怎么变，一个可以被拍到的微动作，不要形容词",',
+    '    "objective": "这一镜人物想要什么（用动词：想挂断、想被听见、想藏起手）",',
     '    "dialogue": "这一镜要张口唱的那一句歌词（必须从歌词里原样摘一句）",',
     '    "cast": ["这一镜出场角色的名字，从上面对 characters 里选"]',
     '  }]',
@@ -314,7 +324,118 @@ function planSystemPrompt(shotCount, duration) {
     '9. 不要出现「四视图」「多视角」「分屏」「拼图」这类排版词。',
     '10. look 只写视觉（胶片、调色、镜头、光线），不要出现乐器、BPM、唱腔这类音乐词——那些归 style。',
     '11. 歌词要能唱：副歌重复、句子短、押韵。',
+    '12. scenes 必须有 5–10 场，按时间顺序覆盖全片；每场都要有 action 和 performance，不许只写一句情绪。',
+    '13. performance 只准写「先做什么 → 停在哪里 → 最后做什么」的可拍动作序列，例如「把硬币推进去，手指停在投币口，又抽回来」。禁止「他很悲伤」「内心挣扎」「若有所思」这类形容词。',
+    '14. 每镜的 performance 必须是这一镜独有的微动作，不能 21 镜重复同一个「低头」。至少要有三镜是「手比脸更早说话」：先拍手、再拍脸。',
+    '15. objective 用动词短语，并且每镜都要和上一镜不同或相反——人物在整支片子里必须有方向感。',
+    '',
+    '故事规则（这条不过，画面再美也是垃圾）：',
+    'A. 必须有一个「转折点」：观众在前半段以为是这件事，后半段发现是另一件事。用一句话能说清，不靠旁白解释。',
+    'B. 歌要在故事里站得住：要么故事里的人真的在唱/在放这首歌（现场音乐），要么歌词本身就是剧情信息，副歌要承担揭示。',
+    'C. 全片控制在「一个主场景 + 一个相邻空间」，不要东跑西跑。',
+    'D. 每个镜头必须有「一个具体动作 + 一个具体物件」（纸页、耳机、纸箱、电话、酒瓶）。只有情绪没有物件的镜头一律删掉。',
+    'E. 禁止：蒙太奇拼贴、无因果的唯美空镜、需要群演/特效/追车/打斗的大场面、靠字幕交代剧情。',
+    'F. 主角真正出镜的人不超过 2 个，且尽量不同框（同框一致性最容易崩）。',
+    'G. 最后一镜必须重新定义前面：同一个物件或同一个动作，看完最后一镜，前面的意思变了。',
+    'H. 全片至少要有一镜「不说话、只有动作」的完整 10 秒，让表演自己说完；那一镜的表演密度要最高。',
+    'I. 歌词不能复述画面。画面在做事，歌词在说别的事，两者错位才高级；只有副歌那句可以和画面对上。',
   ].join('\n');
+}
+
+/** 长片（>10 镜）第一步：只要剧本骨架，不要分镜——一次输出装不下 21 镜。 */
+function planScriptPrompt(duration) {
+  return [
+    '你是音乐 MV 的导演兼作词。用户给一个主题，你要产出一支 MV 的剧本骨架（这一轮不要分镜）。',
+    '只输出一个 JSON 对象，不要解释，不要代码块。',
+    '',
+    'JSON 结构：',
+    '{',
+    '  "title": "歌名（中文，短）",',
+    '  "logline": "一句话故事：谁、想要什么、被什么拦住",',
+    '  "arc": "情绪曲线：起（前奏）承（主歌）转（副歌）合（尾声）",',
+    '  "ending": "最后一个镜头怎么收",',
+    '  "notes": "导演阐述：视觉基调、调色、为什么这么拍",',
+    '  "style": "曲风（英文更稳）：流派、乐器、人声、情绪、速度",',
+    '  "look": "视觉基调一句话，只写画面：胶片感/调色/镜头/光线",',
+    '  "characters": [{ "name": "2-4 字", "look": "年龄性别、发型发色、五官、服装配饰" }],',
+    '  "lyrics": "完整歌词，[Verse] [Chorus] [Bridge] 分段，每句一行",',
+    '  "scenes": [{',
+    '    "no": "场号",',
+    '    "heading": "内景/外景 · 地点 · 时间",',
+    '    "action": "这一场发生什么：环境 + 看得见的物理动作",',
+    '    "performance": "表演节拍：表层动作 → 中途停顿/破绽 → 最后做的决定",',
+    '    "sound": "这场的声音，写具体",',
+    '    "lyric": "落在哪句歌词，没有就留空"',
+    '  }]',
+    '}',
+    '',
+    '硬性规则：',
+    `1. 全片约 ${duration} 秒，scenes 写 6–10 场，按时间顺序覆盖全片，不许只写一句情绪。`,
+    '2. 每场都必须有 action 和 performance；performance 只准写可拍的动作序列，禁止「悲伤」「挣扎」「若有所思」。',
+    '3. 必须有一个转折点：前半段以为是这件事，后半段发现是另一件事，不靠旁白。',
+    '4. 最后一镜必须重新定义前面：同一个物件或动作，看完最后一镜前面的意思变了。',
+    '5. 歌词要能唱（副歌重复、句子短、押韵），且不要复述画面——画面在做事，歌词在说别的事。',
+    '6. characters 写 1–2 个，外形要能画出定妆图。',
+    '7. 这一轮不要输出 shots 字段。',
+  ].join('\n');
+}
+
+/** 长片第二步：只补某一段时间窗内的分镜。 */
+function shotsPrompt(count, from, to, part, total) {
+  return [
+    '你是音乐 MV 的分镜师。用户给你一份已经定稿的剧本，你只负责补分镜表。',
+    '只输出一个 JSON 对象：{"shots":[{...}]}，不要解释，不要代码块。',
+    `要输出正好 ${count} 个镜头，对应全片 ${from}–${to} 秒，也就是全片的第 ${part}/${total} 段。`,
+    '这是接续拍摄：这一段必须承接上一段，绝对不许把故事从头再讲一遍，不许重复前面出现过的场景、动作、台词。',
+    '这一段的人物处境要比上一段更晚、更进一层；如果剧本已经写到结局，就写结局。',
+    '',
+    '每个镜头字段：',
+    '{ "label": "两字到六字的镜头标题", "section": "对应哪句歌词", "beat": "情绪词两三个",',
+    '  "scene": "具体地点与环境", "time": "时间与天气",',
+    '  "size": "extreme_wide|wide|medium|close|extreme_close",',
+    '  "horizontal": "front|front_left|left|back_left|back|back_right|right|front_right",',
+    '  "elevation": "worm|low|eye|high",',
+    '  "move": "static|push|pull|pan|tilt|tracking|crane_up|crane_down|orbit|handheld",',
+    '  "light": "natural|front|side|backlit|top|under|soft|dramatic|golden|blue|night|neon",',
+    '  "dof": "extreme_shallow|shallow|medium|deep",',
+    '  "transition": "cut|dissolve|match|whip|fade",',
+    '  "action": "人物做什么：身体动作 + 表情 + 与环境的关系",',
+    '  "performance": "这一镜独有的微动作：手/眼/呼吸怎么变",',
+    '  "objective": "这一镜人物想要什么（动词短语）",',
+    '  "dialogue": "要张口唱的那一句（从歌词原样摘）",',
+    '  "cast": ["出场角色名"] }',
+    '',
+    '硬规则：',
+    '1. action 只写画面，不写歌词、不写镜头参数、不写字幕水印。',
+    '2. performance 每镜都要不一样，至少三分之一是「手比脸更早说话」（先拍手再拍脸）。',
+    '3. objective 用动词，且每镜与上一镜不同或相反，并且比上一段更急。',
+    '4. 不要出现四视图、分屏、拼图这类排版词。',
+  ].join('\n');
+}
+
+/** 按段落比例切剧本场次，让每一批只写自己那一段。 */
+function scenesForBatch(scenes, part, total) {
+  const list = Array.isArray(scenes) ? scenes : [];
+  if (!list.length) return [];
+  const from = Math.floor((list.length * part) / total);
+  const to = Math.max(from + 1, Math.floor((list.length * (part + 1)) / total));
+  return list.slice(from, to);
+}
+
+/** 把 N 个镜头切成 3 批，各自带时间窗。 */
+function shotBatches(shotCount, duration) {
+  const parts = 3;
+  const size = Math.ceil(shotCount / parts);
+  const out = [];
+  for (let start = 0; start < shotCount; start += size) {
+    const end = Math.min(shotCount, start + size);
+    out.push({
+      count: end - start,
+      from: Math.round((duration * start) / shotCount),
+      to: Math.round((duration * end) / shotCount),
+    });
+  }
+  return out;
 }
 
 async function generatePlan(ctx, params) {
@@ -331,10 +452,44 @@ async function generatePlan(ctx, params) {
   if (String(params.style || '').trim()) userLines.push(`曲风必须贴近：${String(params.style).trim()}`);
   if (String(params.lyrics || '').trim()) userLines.push(`歌词用我给的这版（只补段落标记，不要重写）：\n${String(params.lyrics).trim()}`);
 
-  const { text: raw, model } = await llmText(ctx, planSystemPrompt(shotCount, duration), userLines.join('\n'), { maxTokens: 4000 });
-  const data = parsePlanJson(raw);
-  const plan = normalizePlan(data, { duration, shotCount });
-  return { plan, model, raw };
+  if (shotCount <= 10) {
+    const { text: raw, model } = await llmText(ctx, planSystemPrompt(shotCount, duration), userLines.join('\n'), { maxTokens: 6000 });
+    const data = parsePlanJson(raw);
+    const plan = normalizePlan(data, { duration, shotCount });
+    return { plan, model, raw };
+  }
+
+  // 长片（>10 镜）：先出剧本骨架，再分批补分镜——一次输出 21 镜会被截断
+  const { text: rawHead, model } = await llmText(ctx, planScriptPrompt(duration), userLines.join('\n'), { maxTokens: 4000 });
+  const head = parsePlanJson(rawHead);
+  const shots = [];
+  const batches = shotBatches(shotCount, duration);
+  for (let bi = 0; bi < batches.length; bi += 1) {
+    const batch = batches[bi];
+    const slice = scenesForBatch(head.scenes, bi, batches.length);
+    const shotSoFar = shots
+      .map((s, i) => `${i + 1}. ${s.label || ''}｜${String(s.action || '').slice(0, 40)}`)
+      .join('\n');
+    const context = [
+      `这一段是第 ${bi + 1}/${batches.length} 段（${batch.from}–${batch.to} 秒）。`,
+      slice.length ? '本段对应的剧本场次：\n' + JSON.stringify(slice, null, 1) : '',
+      shotSoFar ? '前面已经拍过的镜头（不许重复这些场景与动作）：\n' + shotSoFar : '',
+      '全片信息：\n' + JSON.stringify({
+        title: head.title,
+        logline: head.logline,
+        arc: head.arc,
+        ending: head.ending,
+        characters: head.characters,
+        lyrics: head.lyrics,
+      }, null, 1),
+    ].filter(Boolean).join('\n\n');
+    const { text: rawShots } = await llmText(ctx, shotsPrompt(batch.count, batch.from, batch.to, bi + 1, batches.length), context, { maxTokens: 4000 });
+    const part = parsePlanJson(rawShots);
+    if (Array.isArray(part && part.shots)) shots.push(...part.shots);
+  }
+  if (!shots.length) throw new Error('分镜生成失败：模型返回里没有 shots');
+  const plan = normalizePlan({ ...head, shots }, { duration, shotCount });
+  return { plan, model, raw: rawHead };
 }
 
 /* ---------------------------- 主流程 ---------------------------- */
@@ -865,13 +1020,24 @@ export function apply(ctx) {
         `曲风：${plan.style}`,
         `主角：${plan.character}`,
         '',
+        '剧本（场次体）：',
+        ...(plan.scenes || []).map((s) => [
+          `场${s.no}　${s.heading || ''}`,
+          s.action ? `  动作：${s.action}` : '',
+          s.performance ? `  表演：${s.performance}` : '',
+          s.sound ? `  声音：${s.sound}` : '',
+          s.lyric ? `  唱词：${s.lyric}` : '',
+        ].filter(Boolean).join('\n')),
+        '',
         '剧本 / 分镜：',
         ...plan.shots.map((s) => [
           `${s.index + 1}. [${s.start}s-${s.end}s] ${s.label}${s.section ? ` · 对位 ${s.section}` : ''}${s.beat ? ` · ${s.beat}` : ''}`,
           `   镜头：${cameraSummary(s)} ｜ 转场：${s.transition || '—'}`,
           `   场景：${s.scene || '—'}${s.time ? `（${s.time}）` : ''}`,
           `   动作：${s.action || '—'}`,
-        ].join('\n')),
+          s.performance ? `   表演：${s.performance}` : '',
+          s.objective ? `   他要：${s.objective}` : '',
+        ].filter(Boolean).join('\n')),
         '',
         '歌词：',
         ...plan.lyrics.split('\n'),
