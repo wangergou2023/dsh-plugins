@@ -319,8 +319,6 @@ export function normalizePlan(data, opts = {}) {
       // 不写就留空，出图时再按动作文字兜底猜（老 plan 兼容）。
       form: normalizeForm(src.form || src.形态 || src.mode),
       composition: normalizeComposition(src.composition || src.shotType || src.构图),
-      // 这一镜出的是人形还是原形（狗 / 骷髅）——决定用哪套外形喂图
-      form: text(src.form || src.shape || src.state),
       dialogue: text(src.dialogue),
       cast: Array.isArray(src.cast)
         ? src.cast.map((x) => String(x || '').trim()).filter(Boolean)
@@ -342,6 +340,21 @@ export function normalizePlan(data, opts = {}) {
   const empty = shots.filter((s) => !s.prompt);
   if (empty.length) {
     throw new Error(`有 ${empty.length} 个镜头没有提示词（第 ${empty.map((s) => s.index + 1).join('、')} 个）`);
+  }
+
+  // 构图兜底：模型经常忘了写 composition。双人镜一律按"过肩"处理——
+  // 两人并排站着看镜头是业余感的头号来源；只有在景别很宽、需要两个人都被看见时才用 two。
+  for (const s of shots) {
+    if (s.composition) continue;
+    const castCount = (s.cast || []).length;
+    if (castCount >= 2) {
+      const size = String(s.size || '').toLowerCase();
+      const wide = ['wide', 'extreme_wide', 'full'].includes(size);
+      const talking = Boolean(String(s.dialogue || '').trim());
+      s.composition = (!wide && talking) ? 'ots' : 'two';
+    } else if (castCount === 1) {
+      s.composition = 'single';
+    }
   }
 
   // 歌词可能只写在场次里（每场一句），顶层 lyrics 空着——不补上的话出歌直接报 lyrics_required
@@ -1394,11 +1407,16 @@ export function lintPlan(plan) {
     else { runForm = forms[i]; run = 1; }
     longestRun = Math.max(longestRun, run);
   }
-  const formsOk = undeclared === 0 && (beastCount + transCount + mixedCount) >= 2 && humanCount >= 2 && longestRun <= 2;
+  // 只有"有本体形态的角色"才需要形态交替。纯人类故事的片（例如父女俩）不该因此扣分。
+  const hasBeastCharacter = (plan.characters || []).some((c) => String((c && c.beast) || '').trim());
+  const formsOk = undeclared === 0
+    && (hasBeastCharacter ? (beastCount + transCount + mixedCount) >= 2 && humanCount >= 2 && longestRun <= 2 : true);
   push('forms', '本体与人形在画面上交替（每镜写死 form）', formsOk,
     undeclared
       ? `有 ${undeclared} 镜没写 form——出图时只能瞎猜，猜出来就是"狗被画成人"`
-      : `本体 ${beastCount} / 人形 ${humanCount} / 过渡 ${transCount} / 同框 ${mixedCount}，最长连续同形态 ${longestRun} 镜`);
+      : (hasBeastCharacter
+        ? `本体 ${beastCount} / 人形 ${humanCount} / 过渡 ${transCount} / 同框 ${mixedCount}，最长连续同形态 ${longestRun} 镜`
+        : '本片角色没有本体形态（纯人类故事），形态交替不适用'));
 
   // 过肩：双人对话镜最省事的拍法是两人并排，但那是业余感的来源。
   const multiCast = (plan.shots || []).filter((s) => (s.cast || []).length >= 2);
