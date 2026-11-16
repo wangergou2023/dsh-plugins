@@ -518,7 +518,10 @@ export function castOf(plan, shot) {
   const all = charactersOf(plan);
   const names = Array.isArray(shot && shot.cast) ? shot.cast.map((n) => String(n || '').trim()).filter(Boolean) : [];
   if (!names.length) return all;
-  const picked = all.filter((c) => names.includes(c.name));
+  // 顺序必须跟着镜头里的 cast 走，不能按角色表重排：
+  // cast[0] 意味着"这一镜谁在焦内"，正反打就是靠它把焦点换过来的（按角色表重排会让两个反打镜拍成同一个人）。
+  const byName = new Map(all.map((c) => [c.name, c]));
+  const picked = names.map((n) => byName.get(n)).filter(Boolean);
   return picked.length ? picked : all;
 }
 
@@ -836,12 +839,22 @@ export function composeFramePrompt(plan, shot) {
   // 但本体镜（含同框单角色）绝对不能走这条路——这行字等于命令模型"给狗穿上皮夹克"，
   // 实测第 8 格就是这么变成"四腿着地的狗穿着皮夹克和牛仔裤"的。
   if (!insertShot && cast.length && !beastBody) {
-    const wardrobe = cast.map((c) => {
+    // 过肩镜只描述焦点人物的衣服：把前景那位也写进来，模型会顺手给他套上（或反过来套给主角）。
+    const wardrobeCast = String(shot.composition || '') === 'ots' ? cast.slice(0, 1) : cast;
+    const wardrobe = wardrobeCast.map((c) => {
       const human = splitLook(c.look).human || '';
       const garment = (human.match(/穿([^，。；]+)/) || [])[1];
       return garment ? `${c.name}：${garment}` : '';
     }).filter(Boolean).join('；');
-    if (wardrobe) parts.push(`角色全程穿着（服装完整，不要赤膊、不要裸上身）：${wardrobe}`);
+    if (wardrobe) {
+      // 只写"穿什么"不够：模型会用场景先验把服装改掉——便利店里的年轻人一律画成店员，
+      // 医院里的一律画成护工（实测第 2 镜女孩穿上了店员的制服、还别着胸牌）。
+      // 所以这里要把"不许换"写死，并且点名场景带来的那种制服。
+      const sceneWord = String(shot.scene || '');
+      const uniformRisk = /便利店|超市|药店|医院|餐厅|咖啡|酒吧|酒店|车站|机场|学校|工地/.test(sceneWord);
+      parts.push(`角色全程穿着（服装完整，不要赤膊、不要裸上身）：${wardrobe}`);
+      parts.push(`服装就是上面这几件，全片不变，不要换成制服、工作服、店员工装${uniformRisk ? '；这一场虽然是' + sceneWord.split(/[，。；]/)[0] + '，但角色穿的不是这地方的工装' : ''}`);
+    }
   }
   // 只喂视觉基调；曲风是给 YuE2 的，塞进画面提示词只会把画面带偏
   if (plan.look) parts.push(plan.look);
