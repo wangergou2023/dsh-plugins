@@ -574,22 +574,36 @@ async function generatePlan(ctx, params) {
   if (String(params.lyrics || '').trim()) userLines.push(`歌词用我给的这版（只补段落标记，不要重写）：\n${String(params.lyrics).trim()}`);
 
   if (shotCount <= 10) {
-    const { text: raw, model } = await llmText(ctx, planSystemPrompt(shotCount, duration), userLines.join('\n'), { maxTokens: 6000 });
-    const data = parsePlanJson(raw);
-    let plan = normalizePlan(data, { duration, shotCount });
-    plan = extendSilentBeat(plan);
-    plan = breakLyricDup(plan);
-    plan = relieveSilence(plan);
-    plan = await addWarmBeat(ctx, plan);
-    plan = await repairBookend(ctx, plan);
-    plan = await focusSignShot(ctx, plan);
-    plan = enforceReversePair(plan);
-    plan = trimLongActions(plan);
-    plan = mergeScenes(plan);
-    plan = cleanLogline(plan);
-    plan = dedupePerformance(plan);
-    plan = dedupeLabels(plan);
-    return { plan, model, raw, lint: lintPlan(plan) };
+    // 剧本是抽样的：同一套提示词跑两次，体检可能一次 100 分、一次 70 分
+    // （实测《放水》第一版 8 项不过，《灯要熄了》同规则下 26/26 全过）。
+    // 所以这里取 3 次里最好的一版——只花 LLM 时间，不占 GPU。
+    let best = null;
+    for (let attempt = 1; attempt <= 3; attempt += 1) {
+      const { text: raw, model } = await llmText(ctx, planSystemPrompt(shotCount, duration), userLines.join('\n'), { maxTokens: 6000 });
+      let plan;
+      try {
+        plan = normalizePlan(parsePlanJson(raw), { duration, shotCount });
+      } catch (error) {
+        if (attempt === 3 && !best) throw error;
+        continue;
+      }
+      plan = extendSilentBeat(plan);
+      plan = breakLyricDup(plan);
+      plan = relieveSilence(plan);
+      plan = await addWarmBeat(ctx, plan);
+      plan = await repairBookend(ctx, plan);
+      plan = await focusSignShot(ctx, plan);
+      plan = enforceReversePair(plan);
+      plan = trimLongActions(plan);
+      plan = mergeScenes(plan);
+      plan = cleanLogline(plan);
+      plan = dedupePerformance(plan);
+      plan = dedupeLabels(plan);
+      const lint = lintPlan(plan);
+      if (!best || lint.score > best.lint.score) best = { plan, model, raw, lint, attempt };
+      if (lint.score >= 96) break;
+    }
+    return { plan: best.plan, model: best.model, raw: best.raw, lint: best.lint, attempts: best.attempt };
   }
 
   // 长片（>10 镜）：先出剧本骨架，再分批补分镜——一次输出 21 镜会被截断

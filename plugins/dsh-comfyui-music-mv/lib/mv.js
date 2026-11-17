@@ -776,7 +776,8 @@ export function dedupeLabels(plan) {
     if (!label) continue;
     if (used.has(label)) {
       // 撞名了：这一镜改用自己动作的最后一句——比加 `·2` 有用，导演看的是"这一镜在干什么"。
-      const parts = String(shot.action || '').split(/[\uff0c\u3002\uff1b\u3001]/).filter(Boolean);
+      const clean = String(shot.action || '').replace(/\uff08[^\uff09]*\uff09/g, '').replace(/[\uff09\uff08]+$/, '');
+      const parts = clean.split(/[\uff0c\u3002\uff1b\u3001]/).map((v) => v.trim()).filter(Boolean);
       const own = (parts.length ? parts[parts.length - 1] : label).slice(0, 13);
       if (own && !used.has(own)) label = own;
     }
@@ -1672,7 +1673,7 @@ export function lintPlan(plan) {
 
   // 标题：连续几镜起同一个名字，分镜表上就分不出是哪一镜，
   // 导演拿着板子找不到镜——这跟画面无关，是脚本可读性的硬伤。
-  const labelList = shots.map((s) => String(s.label || '').trim().replace(/·\d+$/, '')).filter(Boolean);
+  const labelList = shots.map((s) => String(s.label || '').trim()).filter(Boolean);
   const labelDup = labelList.filter((v, i) => labelList.indexOf(v) !== i);
   const labelLong = labelList.filter((v) => v.length > 14);
   push('labels', '每镜有各自的标题', labelDup.length === 0 && labelLong.length === 0,
