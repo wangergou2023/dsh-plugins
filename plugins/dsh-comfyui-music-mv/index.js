@@ -21,7 +21,9 @@ import {
   buildSliceAudioPrompt, buildStitchPrompt, fetchVideo, fetchComfyImage, fetchComfyAudio,
   firstOutputImage, saveVideo, saveFrame, normalizePlan, parsePlanJson, suggestShotCount,
   charactersOf, castOf, lintPlan, segmentLyrics, composeFramePrompt, splitLook, extendSilentBeat, breakLyricDup, heroFormSpecs, trimLongActions, mergeScenes, cleanLogline, expandDialogueBeats,
-  enforceReversePair, dedupePerformance, dedupeLabels,
+  enforceReversePair,
+  fixSizeRuns,
+  linkWarmProp, dedupePerformance, dedupeLabels,
 } from './lib/mv.js';
 import { vocab, cameraSummary } from './lib/shotlang.js';
 import { probeFfmpeg, stitchWithTransitions, concatAudio, composeTransHero } from './lib/ffmpeg.js';
@@ -600,6 +602,8 @@ async function generatePlan(ctx, params) {
       plan = cleanLogline(plan);
       plan = dedupePerformance(plan);
       plan = dedupeLabels(plan);
+      plan = linkWarmProp(plan);
+      plan = fixSizeRuns(plan);
       const lint = lintPlan(plan);
       if (!best || lint.score > best.lint.score) best = { plan, model, raw, lint, attempt };
       if (lint.score >= 96) break;
@@ -650,6 +654,8 @@ async function generatePlan(ctx, params) {
     plan = cleanLogline(plan);
     plan = dedupePerformance(plan);
     plan = dedupeLabels(plan);
+  plan = linkWarmProp(plan);
+  plan = fixSizeRuns(plan);
   return { plan, model, raw: rawHead, lint: lintPlan(plan) };
 }
 
@@ -1301,13 +1307,14 @@ async function execute(job, params) {
     }
     // 生成完再量一次：YuE2 出多长完全不受控（要 111 秒可能只给 78 秒），
     // 差得多就补一段顶上，否则整片会按实际歌长被压缩（实测 210 秒的片子跑成 160 秒）。
-    let joinedInfo = null;
-    if (pieces.length > 1) {
-      joinedInfo = audioDuration(await fs.readFile(path.join(DATA_DIR, job.id, 'song_full.flac')), 'song_full.flac');
-    } else {
-      joinedInfo = audioDuration(await fs.readFile(pieces[0]), 'x.flac');
+    // 注意：此时还没 concat，不能读 song_full.flac——按每段实际时长减去淡化的重叠量估算。
+    const pieceSeconds = [];
+    for (const f of pieces) {
+      const info = audioDuration(await fs.readFile(f), path.basename(f));
+      pieceSeconds.push(Number((info && info.duration) || 0));
     }
-    const shortBy = wantDuration - Number((joinedInfo && joinedInfo.duration) || 0);
+    const estimated = pieceSeconds.reduce((a, b) => a + b, 0) - Math.max(0, pieces.length - 1) * SEG_FADE;
+    const shortBy = wantDuration - estimated;
     if (segments > 1 && shortBy > wantDuration * 0.05) {
       const extraDuration = Math.round(Math.min(SEG_MAX, shortBy + SEG_FADE + 4));
       await jobPatch(job.id, {

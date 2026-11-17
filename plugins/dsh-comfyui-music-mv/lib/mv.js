@@ -126,6 +126,71 @@ export function allocateTimeline(duration, count) {
 // 正反打兜底：模型常给两个"同方向"的过肩镜（焦点永远在第一个人身上），
 // 那不是正反打，是同一个镜头拍两遍。这里把第二镜的焦点换到对手身上，
 // 并让两镜共用同一处空间——观众才看得出"他们在互看"。
+const SIZE_LADDER = ['extreme_wide', 'wide', 'full', 'medium', 'close', 'extreme_close'];
+
+/**
+ * 景别不许三连。模型很爱连着三镜都写 medium；
+ * 这一项是纯形式问题，不需要重写内容，把中间那一镜挪到相邻档就行。
+ */
+export function fixSizeRuns(plan) {
+  const shots = (plan && plan.shots) || [];
+  if (shots.length < 3) return plan;
+  const fixed = [];
+  for (let i = 2; i < shots.length; i += 1) {
+    const a = shots[i - 2].size;
+    const b = shots[i - 1].size;
+    const c = shots[i].size;
+    if (!a || a !== b || b !== c) continue;
+    const at = SIZE_LADDER.indexOf(c);
+    if (at < 0) continue;
+    // 往"更紧"或"更松"走一档，挑一个和邻镜不同的
+    const candidates = [SIZE_LADDER[at - 1], SIZE_LADDER[at + 1]].filter(Boolean);
+    const pick = candidates.find((x) => x !== a && x !== c) || candidates[0];
+    if (!pick) continue;
+    shots[i] = { ...shots[i], size: pick, sizeFixed: true };
+    fixed.push(i + 1);
+  }
+  return { ...plan, shots };
+}
+
+const WARM_WORD = /笑|弯起眼|松了口气|笑出声|眯起眼|嘴角松开|眼里亮/;
+
+/**
+ * 笑的那一镜手上必须有第 N 镜揭示的东西——笑过的东西，后来才知道是什么。
+ * 模型常常"有笑没物件"，这里用一句话把它按住（和 addWarmBeat 的兜底同一个思路）。
+ */
+export function linkWarmProp(plan) {
+  const shots = (plan && plan.shots) || [];
+  const twist = plan && plan.twist;
+  const at = twist && Number(twist.atIndex) > 0 ? Number(twist.atIndex) - 1 : -1;
+  const keyProp = at >= 0 && shots[at] ? String(shots[at].prop || '').trim() : '';
+  if (!keyProp) return plan;
+  const next = shots.map((s) => ({ ...s }));
+  for (const s of next) {
+    const body = `${s.action || ''}${s.performance || ''}`;
+    if (!WARM_WORD.test(body)) continue;
+    if (body.includes(keyProp)) return { ...plan, shots: next };
+    const base = String(s.action || '').replace(/[。；;]$/, '');
+    const full = `${base}，${keyProp}还捏在指间没放下。`;
+    // 动作长度上限 90 字（体检 action-len），超了就用短句，再超就把基底截到最近的标点
+    s.action = full.length <= 88
+      ? full
+      : (() => {
+        const short = `${keyProp}还在手里。`;
+        let cut = base;
+        while (cut.length + short.length + 1 > 88 && cut.length > 12) {
+          const at = Math.max(cut.lastIndexOf('，'), cut.lastIndexOf('、'), cut.lastIndexOf(' '));
+          cut = at > 10 ? cut.slice(0, at) : cut.slice(0, -2);
+        }
+        return `${cut}，${short}`;
+      })();
+    if (!String(s.prop || '').trim()) s.prop = keyProp;
+    s.warmLinked = true;
+    return { ...plan, shots: next };
+  }
+  return plan;
+}
+
 export function enforceReversePair(plan) {
   const shots = (plan.shots || []).slice();
   const ots = [];
