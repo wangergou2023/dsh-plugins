@@ -1,5 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import { lintPlan } from './mv.js';
 import { spawnSync } from 'node:child_process';
 import { findFfmpeg } from './ffmpeg.js';
 
@@ -230,6 +231,29 @@ ul.tight li { margin:2pt 0; }
 @media print { body { background:#fff; } .page { box-shadow:none; margin:0; } }
 `;
 
+/** 体检：这稿为什么是 100 分，或者哪一项没过——导演本里必须自己交代。 */
+function lintSection(plan) {
+  let lint = null;
+  try {
+    lint = lintPlan(plan);
+  } catch {
+    return '';
+  }
+  if (!lint || !Array.isArray(lint.checks)) return '';
+  const rows = lint.checks.map((c) => `<tr>
+    <td class="n">${c.ok ? '✓' : '✗'}</td>
+    <td>${esc(c.label || c.id || '')}</td>
+    <td class="meta">${esc(c.detail || '')}</td>
+  </tr>`).join('');
+  const bad = lint.checks.filter((c) => !c.ok);
+  return `<h2>剧本体检 · ${lint.score} 分（${lint.passed}/${lint.total}）</h2>
+  <p class="meta">${bad.length ? `没过 ${bad.length} 项：${bad.map((c) => esc(c.label || c.id)).join('、')}` : '全部通过。这一项一项都是能落到画面上的条件，不是形容词。'}</p>
+  <table class="sheet" style="font-size:7.8pt">
+    <tr><th style="width:16pt"></th><th style="width:150pt">检查项</th><th>说明</th></tr>
+    ${rows}
+  </table>`;
+}
+
 export function buildBookHtml(job, options = {}) {
   const pluginDir = options.pluginDir || process.cwd();
   const ctx = {
@@ -266,5 +290,6 @@ export function buildBookHtml(job, options = {}) {
 </section>
 <section class="page">${boardSection(shots, ctx)}</section>
 <section class="page">${tableSection(shots)}</section>
+<section class="page">${lintSection(plan)}</section>
 </body></html>`;
 }
