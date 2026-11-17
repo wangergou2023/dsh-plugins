@@ -23,7 +23,8 @@ import {
   charactersOf, castOf, lintPlan, segmentLyrics, composeFramePrompt, splitLook, extendSilentBeat, breakLyricDup, heroFormSpecs, trimLongActions, mergeScenes, cleanLogline, expandDialogueBeats,
   enforceReversePair,
   fixSizeRuns,
-  linkWarmProp, dedupePerformance, dedupeLabels,
+  linkWarmProp,
+  assignPropSlots, dedupePerformance, dedupeLabels,
 } from './lib/mv.js';
 import { vocab, cameraSummary } from './lib/shotlang.js';
 import { probeFfmpeg, stitchWithTransitions, concatAudio, composeTransHero } from './lib/ffmpeg.js';
@@ -686,6 +687,7 @@ async function generatePlan(ctx, params) {
       plan = cleanLogline(plan);
       plan = dedupePerformance(plan);
       plan = dedupeLabels(plan);
+      plan = assignPropSlots(plan);
       plan = linkWarmProp(plan);
       plan = fixSizeRuns(plan);
       plan = await plantProp(ctx, plan);
@@ -739,6 +741,7 @@ async function generatePlan(ctx, params) {
     plan = cleanLogline(plan);
     plan = dedupePerformance(plan);
     plan = dedupeLabels(plan);
+  plan = assignPropSlots(plan);
   plan = linkWarmProp(plan);
   plan = fixSizeRuns(plan);
   plan = await plantProp(ctx, plan);

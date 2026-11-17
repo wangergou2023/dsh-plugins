@@ -153,6 +153,57 @@ export function fixSizeRuns(plan) {
   return { ...plan, shots };
 }
 
+/**
+ * 物件槽位：母题不是"希望模型记得用"，而是排好格子让它必须用。
+ * 每个物件占三格——开场一格（建立）、中段一格（回声）、结尾一格（兑现），
+ * 格与格之间尽量错开，避免四件东西全挤在同一镜。
+ * 这是"物件先行"的落点：分镜表里 prop 这一列由这里写死，出图时也会按 prop 摆手。
+ */
+export function assignPropSlots(plan) {
+  const shots = (plan && plan.shots) || [];
+  const props = (plan && plan.props) || [];
+  if (shots.length < 6 || !props.length) return plan;
+  const names = props.map((p) => String((p && p.name) || '').trim()).filter(Boolean).slice(0, 4);
+  if (!names.length) return plan;
+  const total = shots.length;
+  const third = Math.max(1, Math.floor(total / 3));
+  const mid = Math.max(third, Math.floor(total / 2));
+  const used = new Set();
+  const next = shots.map((s) => ({ ...s }));
+
+  const pick = (from, to) => {
+    for (let i = from; i < Math.min(to, total); i += 1) {
+      if (!used.has(i)) return i;
+    }
+    return -1;
+  };
+
+  names.forEach((name, k) => {
+    // 三个窗口：开场 / 中段 / 结尾；同批物件错开一格，别撞在同一镜
+    const windows = [
+      [0, third],
+      [third + k, Math.min(total, mid + k + 2)],
+      [Math.max(mid, total - third - 1) + k % 2, total],
+    ];
+    windows.forEach(([a, b]) => {
+      const idx = pick(Math.max(0, a), Math.max(1, b));
+      if (idx < 0) return;
+      used.add(idx);
+      const s = next[idx];
+      const body = `${s.action || ''}${s.performance || ''}`;
+      let action = String(s.action || '');
+      if (!body.includes(name)) {
+        const suffix = `${name}还在手里。`;
+        if (action.length + suffix.length + 1 <= 88) {
+          action = `${action.replace(/[。；;]$/, '')}，${suffix}`;
+        }
+      }
+      next[idx] = { ...s, prop: name, action: action.slice(0, 88), propSlotted: true };
+    });
+  });
+  return { ...plan, shots: next };
+}
+
 const WARM_WORD = /笑|弯起眼|松了口气|笑出声|眯起眼|嘴角松开|眼里亮/;
 
 /**
