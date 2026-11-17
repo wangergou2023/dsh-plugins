@@ -107,13 +107,22 @@ ${ticks.join('')}
 /** 定妆：每个角色最多三套（原形 / 人形 / 过渡）。 */
 function heroesSection(job, ctx) {
   const heroes = Array.isArray(job.heroes) ? job.heroes : [];
+  // 纯人类角色没有"本体"，主图就是人形——别把普通人标成"本体"（会让人以为片子有兽形）
+  const chars = (job.plan && job.plan.characters) || [];
+  const hasBeast = (label) => chars.some((c) => String(c.name || '') === String(label || '') && String(c.beast || '').trim());
   const cards = [];
   for (const hero of heroes) {
-    const forms = [
-      { form: 'beast', file: hero.file, note: hero.beastNote || '' },
-      { form: 'human', file: hero.humanFile, note: '' },
-      { form: 'trans', file: hero.transFile, note: '' },
-    ];
+    const beast = hasBeast(hero.label);
+    const forms = beast
+      ? [
+        { form: 'beast', file: hero.file, note: hero.beastNote || '' },
+        { form: 'human', file: hero.humanFile, note: '' },
+        { form: 'trans', file: hero.transFile, note: '' },
+      ]
+      : [
+        { form: 'human', file: hero.humanFile || hero.file, note: '' },
+        { form: 'trans', file: hero.transFile, note: '' },
+      ];
     for (const item of forms) {
       const uri = thumbUri(item.file, 420, ctx);
       if (!uri) continue;
