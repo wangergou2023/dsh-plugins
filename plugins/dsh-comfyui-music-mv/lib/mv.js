@@ -758,6 +758,31 @@ export function breakLyricDup(plan) {
  * 分镜是给摄影机看的：'像要把毛按回去' 拍不出来，'把毛按回去' 能拍。
  * 模型不知道这个区别，写剧本时会一路用比喻，图就永远差一口气。
  */
+/**
+ * 同一句表演连着写三遍时，后两镜改成"只拍这一镜自己的那个动作"。
+ * 实测《灯要熄了》第 1/2/3 镜、4/5/6 镜的表演是同一句话的复制，
+ * 分镜表看起来像没写，导演讲戏时也没法照着做。
+ */
+export function dedupePerformance(plan) {
+  const shots = (plan && plan.shots) || [];
+  let prev = '';
+  let run = 0;
+  for (const shot of shots) {
+    const perf = String(shot.performance || '');
+    const key = perf.slice(0, 12);
+    if (key && key === prev) {
+      run += 1;
+      const own = String(shot.action || '').replace(/[。；].*$/, '').slice(-26);
+      const stage = run === 1 ? '这一次停得更早' : '这一次连停都没有，直接过去';
+      shot.performance = own ? `${own}；${stage}` : `${stage}，动作直接连到下一个镜头`;
+    } else {
+      run = 0;
+    }
+    prev = key;
+  }
+  return plan;
+}
+
 export function deSimile(text) {
   return String(text || '')
     .replace(/像要(把|去|往)?/g, '$1')
