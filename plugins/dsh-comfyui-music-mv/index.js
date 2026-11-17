@@ -31,6 +31,7 @@ import { probeFfmpeg, stitchWithTransitions, concatAudio, composeTransHero } fro
 import { loadRefEditTemplate, buildRefEditGraph, refsForShot, refInstruction, shotForm } from './lib/refedit.js';
 import { cinematicPass } from './lib/grade.js';
 import { buildBookHtml } from './lib/book.js';
+import { buildBoard } from './lib/board.js';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const PLUGIN_DIR = HERE;
@@ -778,6 +779,37 @@ async function comparePlans(ctx, planA, planB) {
   const wins = { A: 0, B: 0, tie: 0 };
   for (const s of shots) wins[s.winner] = (wins[s.winner] || 0) + 1;
   return { model, wins, shots };
+}
+
+/**
+ * 两版分镜对打，必须换位跑两遍。
+ * 单跑一遍会被位置偏差吃掉：同一份分镜放 A 位比放 B 位多赢一倍。
+ * 只有"两种次序下都赢"才算真赢。
+ */
+async function comparePlansFair(ctx, planA, planB) {
+  const first = await comparePlans(ctx, planA, planB);
+  const second = await comparePlans(ctx, planB, planA); // 换位
+  const byIndex = new Map();
+  const note = (round, flip) => {
+    for (const s of round.shots || []) {
+      const cur = byIndex.get(s.i) || { i: s.i, votes: [] };
+      // 第二次跑时 B 位是 A 版，判词里的 A/B 要翻转回来
+      const w = s.winner === 'tie' ? 'tie' : (flip ? (s.winner === 'A' ? 'B' : 'A') : s.winner);
+      cur.votes.push({ winner: w, why: s.why });
+      byIndex.set(s.i, cur);
+    }
+  };
+  note(first, false);
+  note(second, true);
+  const shots = [...byIndex.values()].sort((a, b) => a.i - b.i).map((row) => {
+    const a = row.votes.filter((v) => v.winner === 'A').length;
+    const b = row.votes.filter((v) => v.winner === 'B').length;
+    const verdict = a > b ? 'A' : b > a ? 'B' : 'tie';
+    return { i: row.i, verdict, a, b, why: (row.votes[0] && row.votes[0].why) || '' };
+  });
+  const wins = { A: 0, B: 0, tie: 0 };
+  for (const s of shots) wins[s.verdict] += 1;
+  return { wins, shots, rounds: 2, note: '换位跑了两遍：只有两个次序下都赢的镜才算赢' };
 }
 
 /* ---------------------------- 弱镜返修 ---------------------------- */
@@ -1853,6 +1885,87 @@ export function apply(ctx) {
         `导演本已生成：《${(job.plan && job.plan.title) || '未命名'}》`,
         `文件：${outFile}（${(html.length / 1024 / 1024).toFixed(2)} MB）`,
         `内容：${shots.length} 镜 · 静帧 ${shots.filter((s) => s.frameFile).length} 张 · ${(job.plan && job.plan.scenes && job.plan.scenes.length) || 0} 场`,
+      ]);
+    },
+  });
+
+  ctx.tools.register({
+    name: 'mv_board',
+    description: '把任务的分镜静帧拼成一张 PNG 分镜板（每格带镜号/时长/景别/物件/标题），ffmpeg 拼图，约 1 秒。',
+    parameters: {
+      type: 'object',
+      properties: {
+        id: { type: 'string', description: '任务 id（不填就用最近一个）' },
+        outFile: { type: 'string', description: '输出 png 路径；不填写到插件 .data/<任务id>/分镜板.png' },
+        cols: { type: 'number', description: '列数，默认 3' },
+        width: { type: 'number', description: '每格宽度像素，默认 620' },
+      },
+    },
+    output: OUTPUT,
+    timeoutMs: 300000,
+    async execute(args) {
+      await jobStore.refresh();
+      const job = args.id ? jobStore.get(String(args.id)) : jobStore.list()[0];
+      if (!job) throw new Error('没有这个任务');
+      const shots = (job.shots || []).filter((s) => s.frameFile);
+      if (!shots.length) throw new Error('这个任务还没有静帧');
+      const outFile = args.outFile
+        ? path.resolve(String(args.outFile))
+        : path.join(DATA_DIR, job.id, '分镜板.png');
+      await fs.mkdir(path.dirname(outFile), { recursive: true });
+      const t0 = Date.now();
+      await buildBoard({
+        pluginDir: PLUGIN_DIR,
+        files: shots.map((s) => s.frameFile),
+        shots,
+        outFile,
+        cols: Number(args.cols) || 3,
+        width: Number(args.width) || 620,
+      });
+      return text([
+        `分镜板：${outFile}`,
+        `${shots.length} 格 · ${Date.now() - t0} ms`,
+      ]);
+    },
+  });
+
+  ctx.tools.register({
+    name: 'mv_compare',
+    description: '两版分镜换位对打：同一对版本跑两遍（A/B 各占一次前位），只有两个次序下都赢的镜才算赢，避免位置偏差。',
+    parameters: {
+      type: 'object',
+      properties: {
+        a: { type: 'string', description: 'A 版：任务 id 或 plan JSON 文件路径' },
+        b: { type: 'string', description: 'B 版：任务 id 或 plan JSON 文件路径' },
+        outFile: { type: 'string', description: '把逐镜结论写成 json（可选）' },
+      },
+      required: ['a', 'b'],
+    },
+    output: OUTPUT,
+    timeoutMs: 600000,
+    async execute(args) {
+      await jobStore.refresh();
+      const load = async (ref) => {
+        const key = String(ref || '').trim();
+        if (!key) throw new Error('缺少版本参数');
+        const job = jobStore.get(key);
+        if (job && job.plan) return job.plan;
+        const buf = await fs.readFile(path.resolve(key), 'utf8');
+        const data = JSON.parse(buf);
+        return data.plan || data;
+      };
+      const planA = await load(args.a);
+      const planB = await load(args.b);
+      const result = await comparePlansFair(ctx, planA, planB);
+      if (args.outFile) {
+        await fs.mkdir(path.dirname(path.resolve(String(args.outFile))), { recursive: true });
+        await fs.writeFile(path.resolve(String(args.outFile)), JSON.stringify(result, null, 2), 'utf8');
+      }
+      const lines = result.shots.map((s) => `${String(s.i).padStart(2, '0')}  ${s.verdict === 'tie' ? '平' : s.verdict}  (A ${s.a} : B ${s.b})  ${String(s.why || '').slice(0, 28)}`);
+      return text([
+        `换位对打：A 胜 ${result.wins.A} · B 胜 ${result.wins.B} · 平 ${result.wins.tie}`,
+        result.note,
+        ...lines,
       ]);
     },
   });
