@@ -2295,6 +2295,45 @@ export function apply(ctx) {
       },
     }));
 
+    /** 分镜板 PNG：把已出好的静帧拼成一张图，直接回二进制，面板可以下载。 */
+    disposers.push(webServer.register({
+      kind: 'exact',
+      path: '/api/comfyui-music-mv/board',
+      handler: async (request, response) => {
+        if (request.method !== 'GET') { sendJson(response, 405, { error: 'method_not_allowed' }); return; }
+        const url = new URL(request.url || '/', 'http://localhost');
+        const id = String(url.searchParams.get('id') || '');
+        await jobStore.refresh();
+        const job = id ? jobStore.get(id) : jobStore.list()[0];
+        if (!job) { response.writeHead(404, { 'content-type': 'application/json; charset=utf-8' }); response.end(JSON.stringify({ error: 'not_found', id })); return; }
+        const shots = (job.shots || []).filter((s) => s.frameFile);
+        if (!shots.length) { response.writeHead(409, { 'content-type': 'application/json; charset=utf-8' }); response.end(JSON.stringify({ error: 'no_frames' })); return; }
+        try {
+          const outFile = path.join(DATA_DIR, job.id, '分镜板.png');
+          await fs.mkdir(path.dirname(outFile), { recursive: true });
+          await buildBoard({
+            pluginDir: PLUGIN_DIR,
+            files: shots.map((s) => s.frameFile),
+            shots,
+            outFile,
+            cols: Number(url.searchParams.get('cols')) || 3,
+            width: Number(url.searchParams.get('width')) || 620,
+          });
+          const buffer = await fs.readFile(outFile);
+          const headers = { 'content-type': 'image/png', 'content-length': buffer.length };
+          if (url.searchParams.get('download')) {
+            const name = encodeURIComponent(`《${(job.plan && job.plan.title) || job.id}》分镜板.png`);
+            headers['content-disposition'] = `attachment; filename="mv-board.png"; filename*=UTF-8''${name}`;
+          }
+          response.writeHead(200, headers);
+          response.end(buffer);
+        } catch (error) {
+          response.writeHead(500, { 'content-type': 'application/json; charset=utf-8' });
+          response.end(JSON.stringify({ error: 'board_failed', message: friendlyError(error) }));
+        }
+      },
+    }));
+
     /** 重出定妆图：每个角色按「原形 / 人形」两张重生成，不动已经出好的静帧与视频。 */
     disposers.push(webServer.register({
       kind: 'exact',

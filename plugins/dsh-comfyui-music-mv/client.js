@@ -34,7 +34,29 @@ window.__ModuleLoader__.load({
       ['21:9 (Cinematic)', '21:9'],
     ];
 
-    const STEPS = [
+    /** Electron/webview 里 window.open 会被拦掉（点了没反应），统一用 fetch + blob 下载。 */
+function downloadFile(url, fallbackName) {
+  fetch(url).then(function (r) {
+    if (!r.ok) return r.text().then(function (t) { throw new Error('HTTP ' + r.status + ' ' + String(t).slice(0, 120)); });
+    const cd = r.headers.get('content-disposition') || '';
+    const star = cd.match(/filename\*=UTF-8''([^;]+)/i);
+    const name = star ? decodeURIComponent(star[1]) : fallbackName;
+    return r.blob().then(function (blob) {
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = name;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      setTimeout(function () { URL.revokeObjectURL(a.href); }, 4000);
+      return true;
+    });
+  }).catch(function (e) {
+    alert('下载失败：' + (e && e.message ? e.message : e));
+  });
+}
+
+const STEPS = [
       { key: 'plan', label: '剧本' },
       { key: 'song', label: '出歌' },
       { key: 'hero', label: '定妆' },
@@ -585,8 +607,12 @@ window.__ModuleLoader__.load({
               h('button', { className: 'cfl-chip', disabled: !job, title: '把剧本和参数存成 json', onClick: exportPlan }, '⇩ 导出方案'),
               job ? h('button', {
                 className: 'cfl-chip', title: '把定妆、节奏、剧本、分镜板导成可打印的导演本',
-                onClick: function () { window.open('/api/comfyui-music-mv/book?id=' + encodeURIComponent(job.id), '_blank'); },
+                onClick: function () { downloadFile('/api/comfyui-music-mv/book?download=1&id=' + encodeURIComponent(job.id), '导演本.html'); },
               }, '📖 导演本') : null,
+              job ? h('button', {
+                className: 'cfl-chip', title: '把已出好的静帧拼成一张 PNG 分镜板',
+                onClick: function () { downloadFile('/api/comfyui-music-mv/board?download=1&id=' + encodeURIComponent(job.id), '分镜板.png'); },
+              }, '🖼 分镜板') : null,
               h('button', { className: 'cfl-chip', title: '导入之前导出的方案', onClick: importPlan }, '⇧ 导入'),
               h('label', { style: { display: 'flex', alignItems: 'center', gap: '5px', ...small } },
                 h('input', { type: 'checkbox', checked: cfg.tailLink, onChange: function (e) { setCfg(function (p) { return { ...p, tailLink: e.target.checked }; }); } }),
