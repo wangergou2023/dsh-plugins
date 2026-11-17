@@ -494,6 +494,90 @@ function shotBatches(shotCount, duration) {
  * 体检里「末镜回扣开场物件」不过时，只重写最后一镜把它补上。
  * 这是结构硬伤里最容易自动修的一项，修完再体检一次。
  */
+const PLANT_SYSTEM = [
+  '你在改一个音乐 MV 的分镜。这个物件在这条片子里必须有来处和去处，但现在它出现得太晚或太少。',
+  '只改下面这一镜的 action（动作）和 performance（表演），把物件自然地放进画面里：',
+  '物件必须被手碰到、看见或被使用，不能只是"旁边放着一个"。不要提物件名字以外的解释，不要加台词。',
+  '动作 20–70 字，必须是一段有起点、有停顿的可拍动作。',
+  '只输出 JSON：{"action":"…","performance":"…"}',
+].join('\n');
+
+async function plantProp(ctx, plan) {
+  const shots = (plan && plan.shots) || [];
+  const props = (plan && plan.props) || [];
+  if (!shots.length || !props.length) return plan;
+  const total = shots.length;
+  const coverage = (name) => {
+    const hit = [];
+    shots.forEach((s, i) => {
+      const body = `${s.prop || ''}${s.action || ''}${s.performance || ''}`;
+      if (body.includes(name)) hit.push(i);
+    });
+    return hit;
+  };
+  const weak = props
+    .map((p) => ({ name: String((p && p.name) || '').trim(), hit: coverage(String((p && p.name) || '').trim()) }))
+    .filter((p) => p.name && (p.hit.length < 3 || !p.hit.some((i) => i < total * 0.3) || !p.hit.some((i) => i >= total * 0.3)))
+    .slice(0, 2);
+  if (!weak.length) return plan;
+  let next = shots.map((s) => ({ ...s }));
+
+  const coverageIn = (arr, name) => {
+    const hit = [];
+    arr.forEach((s, i) => {
+      const body = `${s.prop || ''}${s.action || ''}${s.performance || ''}`;
+      if (body.includes(name)) hit.push(i);
+    });
+    return hit;
+  };
+  const twistIdx = plan && plan.twist && Number(plan.twist.atIndex) > 0 ? Number(plan.twist.atIndex) - 1 : -1;
+  const plant = async (idx, name) => {
+    const s = next[idx];
+    // 揭示镜只拍那一件事，不许往里塞道具（塞了 sign-focus 就挂）
+    if (!s || idx === twistIdx || `${s.action || ''}`.includes(name)) return;
+    try {
+      const prompt = `${PLANT_SYSTEM}\n\n这一镜现在是这样：\n场景：${s.scene || ''}\n动作：${s.action || ''}\n表演：${s.performance || ''}\n\n要放进去的物件：${name}`;
+      const { text: raw } = await llmText(ctx, prompt, `把「${name}」放进第 ${idx + 1} 镜。`, { maxTokens: 500 });
+      const parsed = parsePlanJson(raw);
+      const action = String((parsed && parsed.action) || '').trim();
+      if (action.length < 12) return;
+      next[idx] = {
+        ...s,
+        action: action.slice(0, 88),
+        performance: String(parsed.performance || s.performance || '').trim() || s.performance,
+        prop: name,
+        propPlanted: true,
+      };
+    } catch {
+      /* 放不进去就跳过，不影响交付 */
+    }
+  };
+
+  for (const w of weak) {
+    // 前半段：没有早段落点就种一次
+    if (!w.hit.some((i) => i < total * 0.3)) {
+      const headIdx = next.findIndex((s, i) => i !== twistIdx && i < Math.max(1, Math.ceil(total * 0.3))
+        && (s.cast || []).length && !`${s.action || ''}`.includes(w.name));
+      if (headIdx >= 0) await plant(headIdx, w.name);
+    }
+    // 后段：次数不够、或没有晚段落点，再种一次
+    const nowHit = coverageIn(next, w.name);
+    if (nowHit.length < 3 || !nowHit.some((i) => i >= total * 0.55)) {
+      const lateIdx = next.findIndex((s, i) => i !== twistIdx && i >= Math.floor(total * 0.55)
+        && (s.cast || []).length && !`${s.action || ''}`.includes(w.name));
+      if (lateIdx >= 0) await plant(lateIdx, w.name);
+    }
+    // 还不到 3 次就继续找空位补（揭示镜永远不碰）
+    for (let round = 0; round < 2 && coverageIn(next, w.name).length < 3; round += 1) {
+      const slot = next.findIndex((s, i) => i !== twistIdx
+        && (s.cast || []).length && !`${s.action || ''}`.includes(w.name));
+      if (slot < 0) break;
+      await plant(slot, w.name);
+    }
+  }
+  return { ...plan, shots: next };
+}
+
 async function repairBookend(ctx, plan) {
   try {
     const before = lintPlan(plan);
@@ -604,6 +688,7 @@ async function generatePlan(ctx, params) {
       plan = dedupeLabels(plan);
       plan = linkWarmProp(plan);
       plan = fixSizeRuns(plan);
+      plan = await plantProp(ctx, plan);
       const lint = lintPlan(plan);
       if (!best || lint.score > best.lint.score) best = { plan, model, raw, lint, attempt };
       if (lint.score >= 96) break;
@@ -656,6 +741,7 @@ async function generatePlan(ctx, params) {
     plan = dedupeLabels(plan);
   plan = linkWarmProp(plan);
   plan = fixSizeRuns(plan);
+  plan = await plantProp(ctx, plan);
   return { plan, model, raw: rawHead, lint: lintPlan(plan) };
 }
 
