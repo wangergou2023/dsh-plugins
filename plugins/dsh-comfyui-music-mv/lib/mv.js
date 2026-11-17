@@ -1681,6 +1681,41 @@ export function lintPlan(plan) {
       ? `${labelDup.length} 处标题重复（如「${labelDup[0]}」）——分镜表上分不出是哪一镜`
       : (labelLong.length ? `${labelLong.length} 个标题超过 14 字，分镜表放不下` : `${labelList.length} 镜标题互不相同`));
 
+  // 母题：同一个物件出现三次，如果三次都是"把它拿起来"，那不是母题，是道具摆拍。
+  // 判定：三次（首/中/末）里至少一次的场面换了，且首末动作描述不能高度雷同。
+  const propHits = new Map();
+  shots.forEach((s, i) => {
+    const p = String(s.prop || '').trim();
+    if (p) {
+      if (!propHits.has(p)) propHits.set(p, []);
+      propHits.get(p).push({ i, s });
+    }
+  });
+  const motifBigrams = (text) => {
+    const t = String(text || '').replace(/[\s，。；、（）]/g, '');
+    const out = new Set();
+    for (let i = 0; i < t.length - 1; i += 1) out.add(t.slice(i, i + 2));
+    return out;
+  };
+  const motifBad = [];
+  for (const [prop, list] of propHits) {
+    if (list.length < 3) continue;
+    const beats = [list[0], list[Math.floor(list.length / 2)], list[list.length - 1]];
+    const scenes = new Set(beats.map((b) => String(b.s.scene || '')));
+    const a = motifBigrams(beats[0].s.action);
+    const c = motifBigrams(beats[2].s.action);
+    let inter = 0;
+    for (const g of a) if (c.has(g)) inter += 1;
+    const overlap = inter / Math.max(1, Math.min(a.size, c.size));
+    if (scenes.size < 2 || overlap > 0.55) {
+      motifBad.push(`${prop}（${scenes.size} 个场面，首末动作重合 ${(overlap * 100).toFixed(0)}%）`);
+    }
+  }
+  push('prop-motif', '同一物件三次出现要变意思', motifBad.length === 0,
+    motifBad.length
+      ? `${motifBad.join('；')}——三次都在同一场面、做同一件事，等于摆拍`
+      : '每个物件的三次出现都换了场面与动作');
+
   const passed = checks.filter((c) => c.ok).length;
   const total = checks.length || 1;
   return {
