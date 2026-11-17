@@ -1299,6 +1299,38 @@ async function execute(job, params) {
       pieces.push(pieceFile);
       songFileName = audio.filename;
     }
+    // 生成完再量一次：YuE2 出多长完全不受控（要 111 秒可能只给 78 秒），
+    // 差得多就补一段顶上，否则整片会按实际歌长被压缩（实测 210 秒的片子跑成 160 秒）。
+    let joinedInfo = null;
+    if (pieces.length > 1) {
+      joinedInfo = audioDuration(await fs.readFile(path.join(DATA_DIR, job.id, 'song_full.flac')), 'song_full.flac');
+    } else {
+      joinedInfo = audioDuration(await fs.readFile(pieces[0]), 'x.flac');
+    }
+    const shortBy = wantDuration - Number((joinedInfo && joinedInfo.duration) || 0);
+    if (segments > 1 && shortBy > wantDuration * 0.05) {
+      const extraDuration = Math.round(Math.min(SEG_MAX, shortBy + SEG_FADE + 4));
+      await jobPatch(job.id, {
+        stage: 'song', stageLabel: `补一段（还差 ${Math.round(shortBy)} 秒）`,
+        songSegments: { total: segments + 1, done: segments, segDuration: extraDuration },
+      });
+      const built = await buildSongPrompt({
+        style: (plan.style || params.style || '') + ', continuing seamlessly from the previous section, same key, same tempo, same instrumentation',
+        lyrics: segmentLyrics(plan.lyrics || params.lyrics, segments - 1, segments),
+        duration: extraDuration,
+        format: 'flac',
+        steps: params.songSteps,
+        seed: params.songSeed,
+        filenamePrefix: 'mv/' + job.id + '_s' + (segments + 1),
+      });
+      applyModelOverrides(built.prompt, params.models);
+      const promptId = await client.submit(built.prompt);
+      const entry = await client.wait(promptId, 3600000);
+      const audio = await fetchSongAudio(client, entry);
+      const pieceFile = path.join(DATA_DIR, job.id, `song_s${segments + 1}.flac`);
+      await fs.writeFile(pieceFile, audio.buffer);
+      pieces.push(pieceFile);
+    }
     if (pieces.length > 1) {
       const joined = await concatAudio({
         pluginDir: HERE, files: pieces, outFile: path.join(DATA_DIR, job.id, 'song_full.flac'),
@@ -1306,7 +1338,7 @@ async function execute(job, params) {
       });
       songBuffer = await fs.readFile(joined.file);
       songFileName = 'song_full.flac';
-      await jobPatch(job.id, { songSegments: { total: segments, done: segments, segDuration, fade: SEG_FADE } });
+      await jobPatch(job.id, { songSegments: { total: pieces.length, done: pieces.length, segDuration, fade: SEG_FADE } });
     } else {
       songBuffer = await fs.readFile(pieces[0]);
     }

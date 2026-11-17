@@ -404,10 +404,14 @@ export function normalizePlan(data, opts = {}) {
     return '';
   };
 
+  coerceForm.plan = { characters: Array.isArray(data && data.characters) ? data.characters : [] };
   const shots = timeline.map((slot, i) => {
     const src = rawShots[i] || {};
     const text = (v) => String(v || '').replace(/\s+/g, ' ').trim();
     const action = deSimile(text(src.action || src.prompt || src.description));
+    const castList = Array.isArray(src.cast)
+      ? src.cast.map((x) => String(x || '').trim()).filter(Boolean)
+      : [];
     return {
       index: i,
       start: slot.start,
@@ -435,12 +439,12 @@ export function normalizePlan(data, opts = {}) {
       stillFrame: text(src.stillFrame || src.freeze || src.freezeAt || src.frameMoment),
       // 形态由剧本决定：beast 只看见本体 / human 只看见人形 / trans 正在变 / mixed 同框。
       // 不写就留空，出图时再按动作文字兜底猜（老 plan 兼容）。
-      form: normalizeForm(src.form || src.形态 || src.mode),
+      // 兜底：镜头里的演员都没有"本体"，就不许出现本体镜——否则模型会凭空画出一条狗
+      // （实测《放水》第 8 镜、《最后一单》第 5 镜的骷髅狗都是这么来的）。
+      form: coerceForm(normalizeForm(src.form || src.形态 || src.mode), castList),
       composition: normalizeComposition(src.composition || src.shotType || src.构图),
       dialogue: text(src.dialogue),
-      cast: Array.isArray(src.cast)
-        ? src.cast.map((x) => String(x || '').trim()).filter(Boolean)
-        : [],
+      cast: castList,
       prompt: action,
       seed: Number.isFinite(Number(src.seed)) ? Math.trunc(Number(src.seed)) : null,
       // 运行时产物：静帧 / 历史版本 / 视频 / 末帧
@@ -768,6 +772,21 @@ export function breakLyricDup(plan) {
  * 后几镜改用"这一镜自己的动作"起名：取动作里第一个动词短语，最多 14 字。
  * 标题只是索引，但重复的标题会让分镜表看起来像没写、也让导演找不到镜。
  */
+/**
+ * 镜头里的人都写不出本体时，把 beast/trans/mixed 一律压回 human。
+ * 只改"会被画错"的那一种，human 不受影响。
+ */
+function coerceForm(form, cast) {
+  const want = String(form || '').trim();
+  if (!want || want === 'human') return want;
+  const names = (Array.isArray(cast) ? cast : []).map((x) => String(x || '').trim()).filter(Boolean);
+  if (!names.length) return want; // 空镜不谈形态
+  const plan = coerceForm.plan;
+  const all = (plan && plan.characters) || [];
+  const hasBeast = all.some((c) => names.includes(String(c.name || '').trim()) && String((c && c.beast) || '').trim());
+  return hasBeast ? want : 'human';
+}
+
 export function dedupeLabels(plan) {
   const shots = (plan && plan.shots) || [];
   const used = new Set();
