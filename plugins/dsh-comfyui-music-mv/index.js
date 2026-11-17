@@ -1834,7 +1834,7 @@ export function apply(ctx) {
       await fs.writeFile(jsonFile, JSON.stringify({ plan, lint }, null, 2), 'utf8');
       const fails = (lint.checks || []).filter((c) => c.ok === false);
       return text([
-        `《${plan.title}》${(plan.shots || []).length} 镜 · ${(plan.scenes || []).length} 场 · ${Math.round((Date.now() - started) / 1000)} 秒`,
+        `《${plan.title}》${(plan.shots || []).length} 镜 · ${(plan.scenes || []).length} 场 · 全长 ${Math.round((plan.shots || []).reduce((a, s) => a + (s.end - s.start), 0))} 秒`,
         `体检：${lint.score} 分（${lint.passed}/${lint.total}）${fails.length ? '｜没过：' + fails.map((c) => c.label || c.id).join('、') : ''}${attempts.length > 1 ? `｜试了 ${attempts.length} 次：${attempts.join('→')}` : ''}`,
         `本子：${outFile}（${(html.length / 1024 / 1024).toFixed(2)} MB）`,
         `素材：${(plan.props || []).map((p) => p.name).join('、') || '无'}　｜　下一步可以 mv_book / mv_render`,
