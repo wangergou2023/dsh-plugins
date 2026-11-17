@@ -763,6 +763,30 @@ export function breakLyricDup(plan) {
  * 实测《灯要熄了》第 1/2/3 镜、4/5/6 镜的表演是同一句话的复制，
  * 分镜表看起来像没写，导演讲戏时也没法照着做。
  */
+/**
+ * 连续几镜用同一个标题（模型常给一段动作的三拍起同一个名字），
+ * 后几镜改用"这一镜自己的动作"起名：取动作里第一个动词短语，最多 14 字。
+ * 标题只是索引，但重复的标题会让分镜表看起来像没写、也让导演找不到镜。
+ */
+export function dedupeLabels(plan) {
+  const shots = (plan && plan.shots) || [];
+  const seen = new Map();
+  for (const shot of shots) {
+    let label = String(shot.label || '').trim().replace(/\u00b7\d+$/, '');
+    if (!label) continue;
+    // 标题太长时只留最后一句动作：分镜表一行放得下，且天然跟别的镜区分开。
+    if (label.length > 13) {
+      const parts = label.split(/[\uff0c\u3002\uff1b\u3001]/).filter(Boolean);
+      label = parts[parts.length - 1] || label;
+      if (label.length > 13) label = label.slice(0, 13);
+    }
+    const n = (seen.get(label) || 0) + 1;
+    seen.set(label, n);
+    shot.label = n === 1 ? label : label + '\u00b7' + n;
+  }
+  return plan;
+}
+
 export function dedupePerformance(plan) {
   const shots = (plan && plan.shots) || [];
   let prev = '';

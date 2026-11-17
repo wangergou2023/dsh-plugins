@@ -21,7 +21,7 @@ import {
   buildSliceAudioPrompt, buildStitchPrompt, fetchVideo, fetchComfyImage, fetchComfyAudio,
   firstOutputImage, saveVideo, saveFrame, normalizePlan, parsePlanJson, suggestShotCount,
   charactersOf, castOf, lintPlan, segmentLyrics, composeFramePrompt, splitLook, extendSilentBeat, breakLyricDup, heroFormSpecs, trimLongActions, mergeScenes, cleanLogline, expandDialogueBeats,
-  enforceReversePair, dedupePerformance,
+  enforceReversePair, dedupePerformance, dedupeLabels,
 } from './lib/mv.js';
 import { vocab, cameraSummary } from './lib/shotlang.js';
 import { probeFfmpeg, stitchWithTransitions, concatAudio, composeTransHero } from './lib/ffmpeg.js';
@@ -362,6 +362,7 @@ function planSystemPrompt(shotCount, duration) {
     '18. 每镜的 prop 只能选一个，并且必须真的出现在 action 里。',
     '19. 全片必须且只能有一镜 dialogue 留空字符串（放在全片 60%–80% 的位置），那一镜只靠动作和声音说完，表演密度要最高。',
     '22. 每个 prop 必须三段式复现：前 30% 出现一次（建立）、中段出现一次（回声或变义）、后 30% 出现一次（兑现）；只出现两次、或全挤在前半段的，一律不算母题。',
+    '23. 每镜的 label 不超过 12 个字，全片 21 镜不许有重复的 label——分镜表靠它定位镜头，重复了导演就找不到镜。',
     '20. composition 决定构图：两个人同框且有人在说话，写 ots（过肩——只拍主角，对方只在画面边缘虚焦）；两个人要并排被看见才写 two；只有一个人写 single。全片 ots 至少 1 镜。',
     '21. 正反打：一段对话可以连排两镜 ots，第二镜把 cast 顺序反过来（谁在焦内就写在第一个），两镜的 scene 和 time 必须一模一样——观众看到的是同一时刻从两侧各拍一次。单段对话超过 6 秒时应该这么拆。',
     '',
@@ -575,7 +576,19 @@ async function generatePlan(ctx, params) {
   if (shotCount <= 10) {
     const { text: raw, model } = await llmText(ctx, planSystemPrompt(shotCount, duration), userLines.join('\n'), { maxTokens: 6000 });
     const data = parsePlanJson(raw);
-    const plan = dedupePerformance(cleanLogline(mergeScenes(trimLongActions(enforceReversePair(await focusSignShot(ctx, await repairBookend(ctx, await addWarmBeat(ctx, relieveSilence(breakLyricDup(extendSilentBeat(normalizePlan(data, { duration, shotCount }))))))))))));
+    let plan = normalizePlan(data, { duration, shotCount });
+    plan = extendSilentBeat(plan);
+    plan = breakLyricDup(plan);
+    plan = relieveSilence(plan);
+    plan = await addWarmBeat(ctx, plan);
+    plan = await repairBookend(ctx, plan);
+    plan = await focusSignShot(ctx, plan);
+    plan = enforceReversePair(plan);
+    plan = trimLongActions(plan);
+    plan = mergeScenes(plan);
+    plan = cleanLogline(plan);
+    plan = dedupePerformance(plan);
+    plan = dedupeLabels(plan);
     return { plan, model, raw, lint: lintPlan(plan) };
   }
 
@@ -609,7 +622,19 @@ async function generatePlan(ctx, params) {
     if (Array.isArray(part && part.shots)) shots.push(...part.shots);
   }
   if (!shots.length) throw new Error('分镜生成失败：模型返回里没有 shots');
-  const plan = dedupePerformance(cleanLogline(mergeScenes(trimLongActions(enforceReversePair(await focusSignShot(ctx, await repairBookend(ctx, await addWarmBeat(ctx, relieveSilence(breakLyricDup(extendSilentBeat(normalizePlan({ ...head, shots }, { duration, shotCount }))))))))))));
+    let plan = normalizePlan({ ...head, shots }, { duration, shotCount });
+    plan = extendSilentBeat(plan);
+    plan = breakLyricDup(plan);
+    plan = relieveSilence(plan);
+    plan = await addWarmBeat(ctx, plan);
+    plan = await repairBookend(ctx, plan);
+    plan = await focusSignShot(ctx, plan);
+    plan = enforceReversePair(plan);
+    plan = trimLongActions(plan);
+    plan = mergeScenes(plan);
+    plan = cleanLogline(plan);
+    plan = dedupePerformance(plan);
+    plan = dedupeLabels(plan);
   return { plan, model, raw: rawHead, lint: lintPlan(plan) };
 }
 
