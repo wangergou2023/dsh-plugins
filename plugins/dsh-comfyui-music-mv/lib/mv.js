@@ -770,19 +770,23 @@ export function breakLyricDup(plan) {
  */
 export function dedupeLabels(plan) {
   const shots = (plan && plan.shots) || [];
-  const seen = new Map();
+  const used = new Set();
   for (const shot of shots) {
     let label = String(shot.label || '').trim().replace(/\u00b7\d+$/, '');
     if (!label) continue;
-    // 标题太长时只留最后一句动作：分镜表一行放得下，且天然跟别的镜区分开。
-    if (label.length > 13) {
-      const parts = label.split(/[\uff0c\u3002\uff1b\u3001]/).filter(Boolean);
-      label = parts[parts.length - 1] || label;
-      if (label.length > 13) label = label.slice(0, 13);
+    if (used.has(label)) {
+      // 撞名了：这一镜改用自己动作的最后一句——比加 `·2` 有用，导演看的是"这一镜在干什么"。
+      const parts = String(shot.action || '').split(/[\uff0c\u3002\uff1b\u3001]/).filter(Boolean);
+      const own = (parts.length ? parts[parts.length - 1] : label).slice(0, 13);
+      if (own && !used.has(own)) label = own;
     }
-    const n = (seen.get(label) || 0) + 1;
-    seen.set(label, n);
-    shot.label = n === 1 ? label : label + '\u00b7' + n;
+    if (used.has(label)) {
+      let n = 2;
+      while (used.has(label + '\u00b7' + n)) n += 1;
+      label = label + '\u00b7' + n;
+    }
+    used.add(label);
+    shot.label = label;
   }
   return plan;
 }
@@ -1665,6 +1669,16 @@ export function lintPlan(plan) {
     otsShots.length < 2
       ? '过肩镜不足两处，反打不适用'
       : (reversePairs >= 1 ? `有 ${reversePairs} 对正反打` : '有多个过肩镜但没有一对是正反打——焦点人物从没换过，等于同一镜头拍两遍'));
+
+  // 标题：连续几镜起同一个名字，分镜表上就分不出是哪一镜，
+  // 导演拿着板子找不到镜——这跟画面无关，是脚本可读性的硬伤。
+  const labelList = shots.map((s) => String(s.label || '').trim().replace(/·\d+$/, '')).filter(Boolean);
+  const labelDup = labelList.filter((v, i) => labelList.indexOf(v) !== i);
+  const labelLong = labelList.filter((v) => v.length > 14);
+  push('labels', '每镜有各自的标题', labelDup.length === 0 && labelLong.length === 0,
+    labelDup.length
+      ? `${labelDup.length} 处标题重复（如「${labelDup[0]}」）——分镜表上分不出是哪一镜`
+      : (labelLong.length ? `${labelLong.length} 个标题超过 14 字，分镜表放不下` : `${labelList.length} 镜标题互不相同`));
 
   const passed = checks.filter((c) => c.ok).length;
   const total = checks.length || 1;
