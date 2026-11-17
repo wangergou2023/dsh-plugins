@@ -126,6 +126,39 @@ export function allocateTimeline(duration, count) {
 // 正反打兜底：模型常给两个"同方向"的过肩镜（焦点永远在第一个人身上），
 // 那不是正反打，是同一个镜头拍两遍。这里把第二镜的焦点换到对手身上，
 // 并让两镜共用同一处空间——观众才看得出"他们在互看"。
+/**
+ * 揭示镜的兜底：模型改不动的时候，直接把"这一格拍什么"写成这一镜的动作。
+ * 揭示靠画面信号，不靠旁白——所以这一镜的动作就该是那条信号本身。
+ */
+export function forceSignShot(plan) {
+  const shots = (plan && plan.shots) || [];
+  const twist = plan && plan.twist;
+  const at = twist && Number(twist.atIndex) > 0 ? Number(twist.atIndex) - 1 : -1;
+  const sign = String((twist && twist.sign) || '').trim();
+  if (at < 0 || !shots[at] || sign.length < 8) return plan;
+  const s = shots[at];
+  const body = `${s.action || ''}${s.performance || ''}`;
+  const grams = (t) => {
+    const out = new Set();
+    const clean = String(t || '').replace(/[\s，。；：、"“”（）()]/g, '');
+    for (let i = 0; i < clean.length - 1; i += 1) out.add(clean.slice(i, i + 2));
+    return out;
+  };
+  const A = grams(sign);
+  if (!A.size) return plan;
+  let hit = 0;
+  for (const g of grams(body)) if (A.has(g)) hit += 1;
+  if (hit / A.size >= 0.34) return plan;
+  const next = shots.map((x) => ({ ...x }));
+  next[at] = {
+    ...next[at],
+    action: sign.slice(0, 88),
+    performance: next[at].performance || '手停在那上面没有动，眼睛也没有离开。',
+    signForced: true,
+  };
+  return { ...plan, shots: next };
+}
+
 const SIZE_LADDER = ['extreme_wide', 'wide', 'full', 'medium', 'close', 'extreme_close'];
 
 /**
@@ -159,6 +192,36 @@ export function fixSizeRuns(plan) {
  * 格与格之间尽量错开，避免四件东西全挤在同一镜。
  * 这是"物件先行"的落点：分镜表里 prop 这一列由这里写死，出图时也会按 prop 摆手。
  */
+/**
+ * 双人对话镜至少一处过肩。模型经常一个 ots 都不写，
+ * 这里按"同场景 + 两人 + 中近景"找一对，直接标成过肩并交换第二镜的焦点顺序
+ * ——正反打的形式是剪辑决定的，不需要模型同意。
+ */
+export function ensureOtsPair(plan) {
+  const shots = (plan && plan.shots) || [];
+  if (shots.length < 4) return plan;
+  const isTwo = (s) => Array.isArray(s.cast) && s.cast.length >= 2;
+  const tight = (s) => /medium|close|full/.test(String(s.size || ''));
+  const hasOts = shots.some((s) => String(s.composition || '') === 'ots');
+  if (hasOts) return plan;
+  const next = shots.map((s) => ({ ...s }));
+  for (let i = 0; i < next.length - 1; i += 1) {
+    const a = next[i];
+    const b = next[i + 1];
+    if (!isTwo(a) || !isTwo(b)) continue;
+    if (!tight(a) || !tight(b)) continue;
+    const sameScene = String(a.scene || '').trim() && String(a.scene || '').trim() === String(b.scene || '').trim();
+    if (!sameScene) continue;
+    next[i] = { ...a, composition: 'ots' };
+    next[i + 1] = { ...b, composition: 'ots', cast: [b.cast[1], b.cast[0], ...b.cast.slice(2)] };
+    return { ...plan, shots: next };
+  }
+  // 没有同场景的一对：把第一对双人镜标成过肩，至少满足"全片有 ots"
+  const idx = next.findIndex((s) => isTwo(s) && tight(s));
+  if (idx >= 0) next[idx] = { ...next[idx], composition: 'ots' };
+  return { ...plan, shots: next };
+}
+
 export function assignPropSlots(plan) {
   const shots = (plan && plan.shots) || [];
   const props = (plan && plan.props) || [];
@@ -171,9 +234,11 @@ export function assignPropSlots(plan) {
   const used = new Set();
   const next = shots.map((s) => ({ ...s }));
 
+  // 揭示镜只拍那一件事，不许塞物件（塞了 sign-focus 立刻挂）
+  const twistIdx = plan && plan.twist && Number(plan.twist.atIndex) > 0 ? Number(plan.twist.atIndex) - 1 : -1;
   const pick = (from, to) => {
     for (let i = from; i < Math.min(to, total); i += 1) {
-      if (!used.has(i)) return i;
+      if (!used.has(i) && i !== twistIdx) return i;
     }
     return -1;
   };
