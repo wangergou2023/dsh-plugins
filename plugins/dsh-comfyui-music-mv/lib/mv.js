@@ -205,16 +205,17 @@ export function expandDialogueBeats(rawShots, opts = {}) {
         dialogue: slices[i] || '',
         // 焦点交替：第一镜拍 cast[0]，第二镜拍 cast[1]
         cast: i % 2 === 0 ? cast : [cast[1], ...cast.slice(2), cast[0]],
-        composition: 'ots',
+        composition: String(raw.size || '').match(/wide|full|extreme_wide/) ? 'two' : 'ots',
         // 拆出来的每一镜必须是"不同的一刻"，否则 1 镜和 3 镜会拍成同一张照片（实测过）。
-        action: i === 0
-          ? raw.action
-          : (slices[i]
-            ? `${raw.action}（同一动作的下一半：气还没换过来，话是低下去接的）`
-            : '这一镜只是反应：听着对方说，嘴没有动，眼睛先动'),
+        // 拆出来的分镜必须保留原动作：以前这里给无台词的那一段写了通用文案，
+        // 结果 9 镜里有 5 镜的动作全变成"这一镜只是反应"，画面直接崩掉（实测 mv_mwjxar7pcoh3）。
+        action: i === 0 ? raw.action : `${raw.action}（同一动作的下一半：气还没换过来，话是低下去接的）`,
+        // 每一段的表演要落在这段动作的不同位置，否则三段的表演完全一样（分镜表上看像复制粘贴）。
         performance: i === 0
           ? raw.performance
-          : `${String(raw.performance || '')}；接上一个镜头，重心已经换到另一只脚上`,
+          : (slices[i]
+            ? `${String(raw.performance || '')}；这一段落在动作的中途，重心已经换到另一只脚上`
+            : `${String(raw.performance || '')}；这一段只剩收尾那一拍，话没接，眼睛先动`),
       });
     }
   }
