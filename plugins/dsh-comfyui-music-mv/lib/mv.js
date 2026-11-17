@@ -258,7 +258,13 @@ export function assignPropSlots(plan) {
       const body = `${s.action || ''}${s.performance || ''}`;
       let action = String(s.action || '');
       if (!body.includes(name)) {
-        const suffix = `${name}还在手里。`;
+        // 关键：别硬塞"还在手里"。手被别的东西占着时（端盆、拧锁、折抹布），
+        // 这句话会让画面变成三只手——宁可把物件放在场景里。
+        const handFree = /手|指|攥|捏|握|提|拎|抱|托/.test(action) && !/两只手|双手|两只手掌|端着|捧/.test(action);
+        // 戴在身上的东西（镯/表/链/围巾…）不能写成"在手里"——那是又长出一只手
+        const wearable = /镯|环|表|链|绳|围巾|帽|鞋|衣|裙|口罩|领/.test(name);
+        const suffix = wearable ? `${name}还在身上。`
+          : (handFree ? `${name}还在手里。` : `${name}搁在旁边没动。`);
         if (action.length + suffix.length + 1 <= 88) {
           action = `${action.replace(/[。；;]$/, '')}，${suffix}`;
         }
