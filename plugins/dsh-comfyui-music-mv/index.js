@@ -278,12 +278,14 @@ async function renderHero(client, job, plan, character, index, params) {
       {
         form: 'beast',
         text: beastText,
-        guard: '角色定妆照，只有这一个非人形态：动物或骨架本体，完整身形，画面里没有任何人类、没有人的脸、没有手臂、没有衣领、没有兽耳少年',
+        guard: '角色定妆照，只有这一个非人形态：动物或骨架本体，完整身形，四足着地或直立骨架，画面里只有它一个',
       },
       {
         form: 'human',
+        // 否定句会被 ComfyUI 里的扩写模型反过来"看见"（写"没有骨架"它就画一具骨架），
+        // 所以这里只写正面陈述：整个人由皮肤覆盖、穿日常衣服。
         text: character.look || beastText,
-        guard: '角色定妆照，只有这一个人形：正常人类的头部与头发，画面里没有兽耳、没有尾巴、没有动物毛发、没有裸露的骨架；如果角色是骨架成人，骨相只能出现在露出的皮肤质感上，绝不能做成衣服上的骨头印花',
+        guard: '角色定妆照，只有这一个人形：正常人类的头部、头发与皮肤，整个人由皮肤覆盖，穿着日常衣物，画面里只有他一个',
       },
       {
         form: 'trans',
@@ -294,9 +296,15 @@ async function renderHero(client, job, plan, character, index, params) {
     : heroFormSpecs(character.look)).filter((s) => s.form !== 'trans').slice(0, 2);
   const entry = { label: character.name, look: character.look };
   for (const spec of specs) {
+    // 两处确定性护栏（都是踩过的坑）：
+    // 1) look 里只写了上装（"灰色连帽衫"）时，定妆图会给出光腿的人，后面每格都跟着光腿；
+    // 2) 把整句 look 喂进去，模型会把"二十出头"这类描述写到胸牌上。
+    const needPants = spec.form === 'human' && !/裤|裙|短裤|长裤|下装/.test(String(spec.text || ''));
     const heroPrompt = [
       spec.text || character.name || '一位年轻人',
+      needPants ? '下半身穿着深色长裤，与上身是同一套日常衣服' : '',
       spec.guard,
+      '牌子、标签、门牌上的字迹都保持模糊，画面里没有可读文字',
       plan.style ? `风格：${plan.style}` : '',
       '电影感写真，纯色深灰背景，不要文字，不要拼图',
     ].filter(Boolean).join('，');

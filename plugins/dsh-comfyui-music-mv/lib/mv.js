@@ -939,9 +939,19 @@ export function scenePlatePrompt(plan, location) {
   const heading = String((location && location.heading) || location && location.key || '').trim();
   // 用这一场每镜的 scene 文本（它们本来就是"空间长什么样"），不要用场次正文——
   // 场次正文里全是人物动作（"他右手拿螺丝刀"），写进去空镜里就会长出一个老头。
+  // 实测：scene 文本里也会夹人物（"女孩蹲在台阶上"），而空镜里真画了一个坐在台阶上的女孩，
+  // 所以这里把含人/动作的分句整句剔掉，只留环境描述。
+  const PERSON_WORD = /(女孩|男孩|少女|少年|女人|男人|老人|店员|顾客|她|他|有人|那人|身影|肩膀|手指|手掌|目光|眼睛|脸)/;
+  const PEOPLE_MOVE = /(蹲|坐|站|跪|趴|靠|走|跑|推|拉|递|接|拿|拎|握|攥|抱|捧|端|摸|擦|拧|抬|低|转|回|蹲下|弯腰|俯身)/;
   const bits = [];
   for (const s of (Array.isArray(location && location.shots) ? location.shots : [])) {
-    const t = String((s && s.scene) || '').trim().replace(/[。；;，,、]+$/, '');
+    const raw = String((s && s.scene) || '').trim();
+    if (!raw) continue;
+    const kept = raw
+      .split(/[。；;]/)
+      .map((x) => x.trim())
+      .filter((x) => x && !PERSON_WORD.test(x) && !PEOPLE_MOVE.test(x));
+    const t = kept.join('，').replace(/[。；;，,、]+$/, '');
     if (t && !bits.includes(t)) bits.push(t);
   }
   const look = String((plan && plan.look) || '').trim().replace(/[。；;]+$/, '');
@@ -1030,8 +1040,10 @@ export function splitLook(look) {
   return { beast, human: human || raw };
 }
 
-const BEAST_WORD = /犬|狗|骨|骨架|骷髅|兽|四爪|前爪|尾巴|摇尾|毛|爪/;
-const HUMAN_WORD = /人形|少年|少女|男子|女子|男人|女人|青年|少女|老者|孩童/;
+// 只在"真的是非人角色"时才命中。以前把裸字写作兽词，结果「眉骨」「毛衣」「爪子鞋」
+// 都被判成"这个人是兽"，于是凭空多出一张骨架本体图（实测：女孩的眉骨 → 一张人 + 一具骨架）。
+const BEAST_WORD = /犬形|犬|狗形|狼犬|细犬|骨架|骸骨|白骨|骷髅|兽形|兽|四爪|前爪|尾巴|摇尾/;
+const HUMAN_WORD = /人形|少年|少女|男子|女子|男人|女人|青年|老者|孩童/;
 
 /**
  * 一个角色要出几张定妆图：原形一张、人形一张。
