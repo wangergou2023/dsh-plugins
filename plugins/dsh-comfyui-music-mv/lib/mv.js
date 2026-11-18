@@ -229,6 +229,11 @@ export function assignPropSlots(plan) {
   const names = props.map((p) => String((p && p.name) || '').trim()).filter(Boolean).slice(0, 4);
   if (!names.length) return plan;
   const total = shots.length;
+  // 槽位是有配额的：揭示镜要空出来，每个物件至少要占三格（开场/中段/结尾）。
+  // 镜数不够时不能硬塞——塞不下就少留几个物件，否则体检会因为"只出现一次"一直挂。
+  const quota = Math.max(1, Math.floor((total - 1) / 3));
+  const keptNames = names.slice(0, Math.min(names.length, quota));
+  const keptProps = props.filter((p) => keptNames.includes(String((p && p.name) || '').trim()));
   const third = Math.max(1, Math.floor(total / 3));
   const mid = Math.max(third, Math.floor(total / 2));
   const used = new Set();
@@ -243,7 +248,7 @@ export function assignPropSlots(plan) {
     return -1;
   };
 
-  names.forEach((name, k) => {
+  keptNames.forEach((name, k) => {
     // 三个窗口：开场 / 中段 / 结尾；同批物件错开一格，别撞在同一镜
     const windows = [
       [0, third],
@@ -275,7 +280,7 @@ export function assignPropSlots(plan) {
       next[idx] = { ...s, prop: name, action: action.slice(0, 88), propSlotted: true };
     });
   });
-  return { ...plan, shots: next };
+  return { ...plan, props: keptProps, shots: next };
 }
 
 const WARM_WORD = /笑|弯起眼|松了口气|笑出声|眯起眼|嘴角松开|眼里亮/;
@@ -1657,12 +1662,13 @@ export function lintPlan(plan) {
   }
   push('move-run', '运镜不三连', worstMove < 3, `最长连续同运镜 ${worstMove} 镜`);
 
-  // 5. 物件母题：至少 3 个，每个被 ≥2 镜引用
+  // 5. 物件母题：数量跟镜数走（每个物件要占开场/中段/结尾三格，镜少就别硬塞），每个被 ≥2 镜引用
   const text = shots.map((s) => `${s.action || ''} ${s.prop || ''}`).join(' ');
+  const needProps = Math.min(3, Math.max(1, Math.floor((shots.length - 1) / 3)));
   const used = props.map((p) => ({ name: p.name, hits: shots.filter((s) => `${s.prop || ''} ${s.action || ''}`.includes(p.name)).length }));
   const weak = used.filter((u) => u.hits < 2);
-  push('props', '物件母题重复咬合', props.length >= 3 && weak.length === 0 && text.length > 0,
-    props.length < 3 ? `只有 ${props.length} 个物件，至少要 3 个` : (weak.length ? `${weak.map((u) => u.name).join('、')} 只出现一次` : `${used.map((u) => `${u.name}×${u.hits}`).join('　')}`));
+  push('props', '物件母题重复咬合', props.length >= needProps && weak.length === 0 && text.length > 0,
+    props.length < needProps ? `只有 ${props.length} 个物件，${shots.length} 镜至少要 ${needProps} 个` : (weak.length ? `${weak.map((u) => u.name).join('、')} 只出现一次` : `${used.map((u) => `${u.name}×${u.hits}`).join('　')}`));
 
   // 6. 首尾回扣：最后一镜要用到第一个物件
   const firstProp = props.length ? props[0].name : '';

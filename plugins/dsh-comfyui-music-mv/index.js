@@ -32,7 +32,7 @@ import { cinematicPass } from './lib/grade.js';
 import { buildBookHtml } from './lib/book.js';
 import { buildBoard } from './lib/board.js';
 import { text, llmText, friendlyError } from './lib/llm.js';
-import { planSystemPrompt, planScriptPrompt, shotsPrompt } from './lib/prompts.js';
+import { planSystemPrompt, planScriptPrompt, shotsPrompt, shotBatches, scenesForBatch } from './lib/prompts.js';
 import { repairBookend, relieveSilence, reviewPlan, comparePlans, comparePlansFair, rewriteShots, addWarmBeat, focusSignShot } from './lib/repairs.js';
 import { JobStore } from './lib/jobs.js';
 
