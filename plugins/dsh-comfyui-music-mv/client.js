@@ -90,6 +90,52 @@ const STEPS = [
       }
     }
 
+    /**
+     * 写剧本是 20–60 秒的请求。面板一切走就卸载组件，result 回了也没人接，
+     * 于是"点了生成剧本然后离开，回来状态就没了"。
+     * 把这次请求挂在模块作用域（不随组件卸载），完成时直接写进 localStorage，
+     * 回来时从模块或 localStorage 捞回来。
+     */
+    const PLAN_RUN_KEY = 'comfyui-music-mv.planrun.v1';
+    let ACTIVE_PLAN_RUN = null;
+
+    function stashPlan(plan, lint) {
+      try {
+        const raw = window.localStorage.getItem(FORM_KEY);
+        const parsed = raw ? JSON.parse(raw) : {};
+        parsed.plan = plan;
+        window.localStorage.setItem(FORM_KEY, JSON.stringify(parsed));
+        window.localStorage.setItem(PLAN_RUN_KEY, JSON.stringify({ done: true, at: Date.now() }));
+      } catch { /* ignore */ }
+      return { plan, lint };
+    }
+
+    function takeStashedPlan() {
+      if (ACTIVE_PLAN_RUN && ACTIVE_PLAN_RUN.result) {
+        const out = ACTIVE_PLAN_RUN.result;
+        ACTIVE_PLAN_RUN = null;
+        try { window.localStorage.removeItem(PLAN_RUN_KEY); } catch { /* ignore */ }
+        return out;
+      }
+      try {
+        const flag = JSON.parse(window.localStorage.getItem(PLAN_RUN_KEY) || 'null');
+        if (flag && flag.done) {
+          const form = JSON.parse(window.localStorage.getItem(FORM_KEY) || 'null');
+          window.localStorage.removeItem(PLAN_RUN_KEY);
+          if (form && form.plan) return { plan: form.plan, lint: null };
+        }
+      } catch { /* ignore */ }
+      return null;
+    }
+
+    function planRunning() {
+      if (!ACTIVE_PLAN_RUN) return false;
+      if (ACTIVE_PLAN_RUN.result) return false;
+      // 超过 5 分钟还没回来，基本是请求断了，别把按钮一直锁着。
+      if (Date.now() - ACTIVE_PLAN_RUN.startedAt > 5 * 60 * 1000) { ACTIVE_PLAN_RUN = null; return false; }
+      return true;
+    }
+
     const CFG_DEFAULTS = {
       theme: '',
       duration: 60,
@@ -172,6 +218,14 @@ const STEPS = [
       }, []);
 
       React.useEffect(function () {
+        const back = takeStashedPlan();
+        if (back && back.plan) {
+          setPlan(back.plan);
+          if (back.lint) setLint(back.lint);
+        }
+      }, []);
+
+      React.useEffect(function () {
         loadMeta(0);
         refreshHistory();
         const timer = setInterval(refreshHistory, 10000);
@@ -197,12 +251,19 @@ const STEPS = [
       async function makePlan() {
         setError('');
         if (!String(cfg.theme || '').trim()) { setError('先写一个主题'); return; }
-        setBusy('正在写剧本…');
+        if (planRunning()) { setBusy('上一条还在写，等它回来…'); return; }
+        setBusy('正在写剧本…（离开插件也不会丢，回来会接着显示）');
+        ACTIVE_PLAN_RUN = { startedAt: Date.now(), result: null };
+        try { window.localStorage.setItem(PLAN_RUN_KEY, JSON.stringify({ done: false, at: Date.now() })); } catch { /* ignore */ }
         try {
           const data = await post('/api/comfyui-music-mv/plan', { theme: cfg.theme, duration: cfg.duration, style: cfg.style });
+          const stashed = stashPlan(data.plan || null, data.lint || null);
+          if (ACTIVE_PLAN_RUN) ACTIVE_PLAN_RUN.result = stashed;
           setPlan(data.plan);
           setLint(data.lint || null);
         } catch (err) {
+          if (ACTIVE_PLAN_RUN) ACTIVE_PLAN_RUN = null;
+          try { window.localStorage.removeItem(PLAN_RUN_KEY); } catch { /* ignore */ }
           setError(String((err && err.message) || err));
         } finally { setBusy(''); }
       }
