@@ -21,7 +21,7 @@ import {
   firstOutputImage, saveVideo, saveFrame, normalizePlan, parsePlanJson, suggestShotCount,
   charactersOf, castOf, lintPlan, segmentLyrics, composeFramePrompt, splitLook, extendSilentBeat, breakLyricDup, heroFormSpecs, trimLongActions, mergeScenes, cleanLogline, expandDialogueBeats,
   enforceReversePair,
-  fixSizeRuns,
+  fixSizeRuns, fixMoveRuns,
   linkWarmProp,
   assignPropSlots, forceSignShot, ensureOtsPair, dedupePerformance, dedupeLabels,
   planLocations, scenePlatePrompt,
@@ -174,6 +174,7 @@ async function generatePlan(ctx, params) {
       plan = dedupeLabels(plan);
       plan = linkWarmProp(plan);
       plan = fixSizeRuns(plan);
+      plan = fixMoveRuns(plan);
       const lint = lintPlan(plan);
       if (!best || lint.score > best.lint.score) best = { plan, model, raw, lint, attempt };
       if (lint.score >= 96) break;
@@ -229,6 +230,7 @@ async function generatePlan(ctx, params) {
     plan = dedupeLabels(plan);
   plan = linkWarmProp(plan);
   plan = fixSizeRuns(plan);
+  plan = fixMoveRuns(plan);
   return { plan, model, raw: rawHead, lint: lintPlan(plan) };
 }
 

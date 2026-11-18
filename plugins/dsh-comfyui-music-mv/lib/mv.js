@@ -162,6 +162,43 @@ export function forceSignShot(plan) {
 const SIZE_LADDER = ['extreme_wide', 'wide', 'full', 'medium', 'close', 'extreme_close'];
 
 /**
+ * 运镜不许三连。和景别三连同理，但更致命：
+ * 连续三镜都是 push，观众会以为画面卡住了。
+ * 运镜有"静→动→静"的呼吸，这里把第三镜往反向挪一档。
+ */
+const MOVE_RUN_SWAP = {
+  push: ['pull', 'static'],
+  pull: ['push', 'static'],
+  pan: ['tilt', 'static'],
+  tilt: ['pan', 'static'],
+  tracking: ['handheld', 'static'],
+  handheld: ['tracking', 'static'],
+  crane_up: ['crane_down', 'static'],
+  crane_down: ['crane_up', 'static'],
+  orbit: ['tracking', 'static'],
+  static: [],
+};
+
+export function fixMoveRuns(plan) {
+  const shots = (plan && plan.shots) || [];
+  if (shots.length < 3) return plan;
+  const fixed = [];
+  for (let i = 2; i < shots.length; i += 1) {
+    const a = shots[i - 2].move;
+    const b = shots[i - 1].move;
+    const c = shots[i].move;
+    if (!a || a !== b || b !== c) continue;
+    // static 三连是允许的（镜头不动也是一种节奏），只有"动镜头"三连才算问题
+    if (c === 'static') continue;
+    const pick = (MOVE_RUN_SWAP[c] || ['static']).find((x) => x !== c);
+    if (!pick) continue;
+    shots[i] = { ...shots[i], move: pick, moveFixed: true };
+    fixed.push(i + 1);
+  }
+  return fixed.length ? { ...plan, shots } : plan;
+}
+
+/**
  * 景别不许三连。模型很爱连着三镜都写 medium；
  * 这一项是纯形式问题，不需要重写内容，把中间那一镜挪到相邻档就行。
  */
