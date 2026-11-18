@@ -24,7 +24,7 @@ import {
   fixSizeRuns, fixMoveRuns,
   linkWarmProp,
   assignPropSlots, forceSignShot, ensureOtsPair, dedupePerformance, dedupeLabels,
-  planLocations, scenePlatePrompt, planProps, propPrompt,
+  planLocations, scenePlatePrompt, planProps, propPrompt, assetState,
 } from './lib/mv.js';
 import { vocab, cameraSummary } from './lib/shotlang.js';
 import { probeFfmpeg, stitchWithTransitions, concatAudio, composeTransHero } from './lib/ffmpeg.js';
@@ -862,8 +862,24 @@ async function execute(job, params) {
     }
   }
 
+  /* 4d. 资产确认关：资产齐了就停下来，等人点"资产收下"再出静帧。
+     素材形态写进 job.assetState：M2 已入库 / M1 有占位 / M0 纯提示词。 */
+  const phase0 = String(params.phase || 'all');
+  const assetsState = assetState(plan, job);
+  await jobPatch(job.id, {
+    assetState: assetsState.mode,
+    assetGaps: assetsState.gaps,
+  });
+  if (phase0 === 'assets' || params.assetsOnly === true) {
+    const label = assetsState.mode === 'M2'
+      ? '资产就绪（已入库），等你审'
+      : (assetsState.mode === 'M1' ? '资产不齐（有占位），等你审' : '资产为空（纯提示词），等你审');
+    await jobPatch(job.id, { status: 'paused', stage: 'assets', stageLabel: label });
+    return jobStore.get(job.id) || job;
+  }
+
   /* 5. 静帧：每镜一张，先给人看，不满意可以单张重 roll */
-  const phase = String(params.phase || 'all');
+  const phase = phase0;
   const wantFrames = phase === 'all' || phase === 'frames';
   const wantVideos = phase === 'all' || phase === 'videos';
   const opt = {

@@ -426,7 +426,7 @@ const STEPS = [
       async function startRun(phase) {
         setError('');
         if (!plan) { setError('先生成剧本'); return; }
-        setBusy(phase === 'all' ? '一键到底：正在排队…' : '出静帧：正在排队…');
+        setBusy(phase === 'all' ? '一键到底：正在排队…' : (phase === 'assets' ? '出资产：正在排队…' : '出静帧：正在排队…'));
         try {
           const data = await post('/api/comfyui-music-mv/run', {
             plan,
@@ -908,8 +908,10 @@ const STEPS = [
               )
             ),
             h('div', { className: 'mv-actions' },
+              h('button', { className: 'cfl-chip', style: { fontWeight: 600 }, disabled: !!busy || running, title: '只出歌 + 资产（定妆/地点/道具），停下来等你审资产', onClick: function () { startRun('assets'); } }, '① 出歌 + 资产'),
               h('button', { className: 'cfl-chip', style: { fontWeight: 600 }, disabled: !!busy || running, onClick: function () { startRun('frames'); } }, '① 出歌 + 定妆 + 静帧'),
               job && job.status === 'paused' ? h('button', { className: 'cfl-chip', style: { fontWeight: 600 }, disabled: !!busy, onClick: function () { continueRun('videos'); } }, '② 出视频 + 合成') : null,
+              job && job.status === 'paused' && job.stage === 'assets' ? h('button', { className: 'cfl-chip', style: { fontWeight: 600 }, disabled: !!busy, title: '资产审过了，继续出静帧', onClick: function () { continueRun('frames'); } }, '✓ 资产收下，出静帧') : null,
               job && job.status === 'interrupted' ? h('button', { className: 'cfl-chip', style: { fontWeight: 600 }, disabled: !!busy, onClick: function () { continueRun(job.shots && job.shots.some(function (s) { return s.frame; }) ? 'videos' : 'frames'); } }, '↻ 续跑（进程重启过）') : null,
               h('button', { className: 'cfl-chip', disabled: !!busy || running, onClick: function () { startRun('all'); } }, '一键到底'),
               h('button', { className: 'cfl-chip', disabled: !job, title: '把剧本和参数存成 json', onClick: exportPlan }, '⇩ 导出方案'),

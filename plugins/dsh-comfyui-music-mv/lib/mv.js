@@ -886,6 +886,25 @@ export function scenePlatePrompt(plan, location) {
 }
 
 /**
+ * 素材形态：M0 纯提示词 / M1 有占位（部分资产）/ M2 已入库（角色+地点+道具都有）。
+ * 这是给"投喂层闸门"用的：M1 状态下出图，模型只能靠文字猜形体，狗头人身就是这么来的。
+ */
+export function assetState(plan, job) {
+  const heroes = Array.isArray(job && job.heroes) ? job.heroes.filter((h) => h && h.comfy) : [];
+  const plates = Array.isArray(job && job.plates) ? job.plates.filter((p) => p && p.comfy) : [];
+  const props = Array.isArray(job && job.props) ? job.props.filter((p) => p && p.comfy) : [];
+  const wantChars = charactersOf(plan).length;
+  const wantProps = planProps(plan).length;
+  const gaps = [];
+  if (heroes.length < wantChars) gaps.push(`角色定妆 ${heroes.length}/${wantChars}`);
+  if (!plates.length) gaps.push('地点定妆缺失');
+  if (props.length < wantProps) gaps.push(`道具资产 ${props.length}/${wantProps}`);
+  const mode = (!heroes.length && !plates.length && !props.length) ? 'M0' : (gaps.length ? 'M1' : 'M2');
+  return { mode, heroes: heroes.length, plates: plates.length, props: props.length, gaps };
+}
+
+
+/**
  * 这一片里需要"道具资产卡"的物件：plan.props（名字 + 含义）。
  * 同一件东西全片只能有一种形制——铃铛在第 7/19/21 镜变成三只就是从没有过道具卡。
  */
