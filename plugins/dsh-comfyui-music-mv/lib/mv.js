@@ -626,8 +626,12 @@ export function normalizePlan(data, opts = {}) {
       dof: text(src.dof) || 'medium',
       transition: text(src.transition) || 'cut',
       action,
-      // 表演层：影帝级 MV 靠这个，不靠"他很悲伤"这种形容词
-      performance: deSimile(text(src.performance || src.microAction || src.acting)),
+      // 表演层：影帝级 MV 靠这个，不靠"他很悲伤"这种形容词。
+      // 三拍协议：说话前 / 说话时 / 说完后，外加 2–4 个可观察信号通道。
+      ...(() => {
+        const perf = normalizePerformance(src);
+        return { performance: perf.performance, perfBeats: perf.perfBeats, channels: perf.channels };
+      })(),
       objective: text(src.objective || src.want),
       prop: text(src.prop || src.object || src.item),
       // 定格：动作是一段时间，静帧只截一刻（变形镜必须写，否则模型只能猜）
@@ -742,6 +746,14 @@ export function normalizePlan(data, opts = {}) {
     },
     duration,
     shotCount: shots.length,
+    // 风格锚：一句定调，逐字进所有资产与每一格镜头提示词。
+    // 没有它，21 格的颗粒/色温/对比会各自漂，剪在一起像三个人拍的。
+    styleAnchor: (() => {
+      const own = String((data && (data.styleAnchor || data.style_anchor || data.anchor)) || '').trim().replace(/[。；;]+$/, '');
+      if (own) return own;
+      const look = String((data && (data.look || data.visualStyle)) || '').trim().replace(/[。；;]+$/, '');
+      return look ? look.split(/[，,]/).slice(0, 2).join('，') : '';
+    })(),
     shots: attachSceneNos(shots, Array.isArray(data && data.scenes) ? data.scenes.map((s, i) => ({
       no: String((s && (s.no || s.number || s.index)) || i + 1),
       heading: String((s && (s.heading || s.slug || s.title || s.location)) || '').trim(),
@@ -1185,9 +1197,60 @@ export function beastAction(action) {
     .replace(/手/g, '爪');
 }
 
+/**
+ * 表演三拍协议（依据 emotion-performance-director）：
+ * 潜台词 → 2–4 个可观察信号（目光/呼吸/脸/身体/声音）→ 三拍时序（说话前/中/后）。
+ * 模型天然爱写"她很悲伤""眼泪掉下来"，这两个都是偷懒；通道数量也要卡住，
+ * 一格里塞五个信号，观众反而读不出主次。
+ */
+export const PERF_CHANNELS = ['gaze', 'breath', 'face', 'body', 'voice'];
+
+export function normalizePerformance(src) {
+  const asText = (v) => String(v === undefined || v === null ? '' : v).replace(/\s+/g, ' ').trim();
+  const raw = src && (src.performance || src.microAction || src.acting);
+  if (raw && typeof raw === 'object') {
+    const before = String(raw.before || raw.前 || '').trim();
+    const during = String(raw.during || raw.中 || raw.action || '').trim();
+    const after = String(raw.after || raw.后 || '').trim();
+    const channels = (Array.isArray(raw.channels) ? raw.channels : Array.isArray(src && src.channels) ? src.channels : [])
+      .map((c) => String(c || '').trim().toLowerCase())
+      .filter((c) => PERF_CHANNELS.includes(c));
+    const text = [before && `说话前：${before}`, during && `说话时：${during}`, after && `说完后：${after}`]
+      .filter(Boolean).join('；');
+    return { performance: deSimile(text), perfBeats: { before, during, after }, channels: [...new Set(channels.length ? channels : inferChannels(text))] };
+  }
+  return {
+    performance: deSimile(asText(raw)),
+    perfBeats: { before: '', during: deSimile(asText(raw)), after: '' },
+    channels: inferChannels(asText(raw)),
+  };
+}
+
+/**
+ * 通道兜底：模型经常不写 channels 字段，但表演文本里其实已经有信号了。
+ * 这里按关键词把文本归到五通道，取前 4 个（至少 2 个）——机检才有东西可卡。
+ */
+export function inferChannels(perf) {
+  const blob = String(perf || '');
+  if (!blob.trim()) return [];
+  const hit = {
+    gaze: (blob.match(/看|望|盯|视线|目光|眼|瞟|瞥|注视/g) || []).length,
+    breath: (blob.match(/呼吸|吸了口气|喘|屏住|吐气|鼻/g) || []).length,
+    face: (blob.match(/嘴角|眉|脸|笑|唇|牙|咬|表情|皱/g) || []).length,
+    body: (blob.match(/手|指|腕|肩|背|腰|膝|脚|停住|转身|坐下|站起/g) || []).length,
+    voice: (blob.match(/说|嗓|低声|开口|声音|叹|哼|笑出声|喊/g) || []).length,
+  };
+  const ranked = Object.entries(hit).filter(([, n]) => n > 0).sort((a, b) => b[1] - a[1]).map(([k]) => k);
+  if (ranked.length >= 2) return ranked.slice(0, 4);
+  return ranked.length === 1 ? ranked : ['body'];
+}
+
 export function composeFramePrompt(plan, shot) {
   const parts = [];
   const cast = castOf(plan, shot);
+  // 风格锚句：全片逐字复用同一句，资产与每一格都带它（否则 21 格的调色/颗粒会各自漂）。
+  const anchor = String((plan && plan.styleAnchor) || (plan && plan.look) || '').trim().replace(/[。；;]+$/, '');
+  if (anchor) parts.push(anchor);
   // 原形 / 人形决定喂哪套外形：不然"狗叼骨头"会被画成"男人抱女人"
   const probe = `${shot.form || ''} ${shot.action || ''} ${shot.label || ''}`;
   // 剧本里写死的 form 就是导演决定，不要再从文字里猜。
@@ -1733,6 +1796,26 @@ export function lintPlan(plan) {
 
   push('perf-dup', '表演不重复', dup.length === 0,
     dup.length ? `${dup.length} 镜的表演开头重复（${dup.slice(0, 3).join('、')}）` : '每镜微动作都不同');
+
+  // 风格锚：一句定调，逐字复用。长度与空词都要卡——"很/非常/比较"这种词进提示词等于没写。
+  const anchor = String((plan && plan.styleAnchor) || '').trim();
+  const anchorVague = /很|非常|比较|特别|十分|相当/.test(anchor);
+  const anchorOk = anchor.length >= 8 && anchor.length <= 60 && !anchorVague;
+  push('style-anchor', '有一句逐字复用的风格锚', anchorOk,
+    anchorOk ? `「${anchor}」` : anchor ? `风格锚不合格：「${anchor}」（${anchorVague ? '含"很/非常"这类空词' : `${anchor.length} 字，应 8–60 字`}）` : '没有风格锚，21 格的调色会各自漂');
+
+  // 表演通道：1–4 个可观察信号（目光/呼吸/脸/身体/声音）。一格里塞五个，观众读不出主次。
+  const channelBad = shots.filter((s) => Array.isArray(s.channels) && (s.channels.length < 1 || s.channels.length > 4));
+  const noChannels = shots.filter((s) => !Array.isArray(s.channels) || !s.channels.length).length;
+  push('perf-channels', '表演信号不超过 4 个通道', channelBad.length === 0,
+    channelBad.length
+      ? `${channelBad.length} 镜通道数不对（${channelBad.slice(0, 3).map((s) => `${s.label || s.index + 1}:${(s.channels || []).length}`).join('、')}）`
+      : noChannels === shots.length ? '模型没写 channels（老格式），按三拍文本兜底' : `${shots.length - noChannels}/${shots.length} 镜有明确通道`);
+
+  // 默认不哭：台词/表演里自己长出眼泪是最偷懒的情绪表达。
+  const cryShot = shots.filter((s) => /泪|哭出声|嚎啕/.test(`${s.performance || ''}${s.action || ''}`) && !s.cry);
+  push('no-auto-tears', '没有默认掉眼泪', cryShot.length === 0,
+    cryShot.length ? `${cryShot.length} 镜写了眼泪但没标 cry（${cryShot.slice(0, 3).map((s) => s.label || s.index + 1).join('、')}）` : '没有靠眼泪解决问题');
 
   // 3. 景别不三连
   const sizes = shots.map((s) => s.size || '');
