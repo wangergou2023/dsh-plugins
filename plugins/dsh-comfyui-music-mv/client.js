@@ -223,7 +223,7 @@ const STEPS = [
        */
       const pollPlanTask = React.useCallback(function (taskId) {
         const started = Date.now();
-        setBusy('正在写剧本…（离开插件不会丢，回来会接着显示）');
+        setBusy('正在写剧本…');
         const tick = async function () {
           try {
             const data = await api('/api/comfyui-music-mv/plan-task?id=' + encodeURIComponent(taskId));
@@ -232,6 +232,12 @@ const STEPS = [
               try { window.localStorage.removeItem(PLAN_RUN_KEY); } catch { /* ignore */ }
               setPlan(data.plan);
               setLint(data.lint || null);
+              // 上一部片的任务还挂着的话清掉，不然分镜板/定妆还是旧的。
+              setJob(function (cur) {
+                if (!cur) return null;
+                if (cur.status === 'running' || cur.status === 'queued') return cur;
+                return null;
+              });
               setBusy('');
               return;
             }
@@ -647,7 +653,11 @@ const STEPS = [
             h('div', { style: { ...muted, marginTop: '8px' } }, '角色（每个角色一张定妆图，全片复用）'),
             ...planCharacters().map(function (c, i) {
               const list = planCharacters();
-              const hero = job && Array.isArray(job.heroes) ? job.heroes[i] : null;
+              // 旧项目的定妆图不能挂到新剧本的角色上：只有 job 与当前 plan 对得上时才显示。
+              const jobMatchesPlan = !!(job && plan && job.plan
+                && job.plan.title === plan.title
+                && (job.shots || []).length === (plan.shots || []).length);
+              const hero = jobMatchesPlan && Array.isArray(job.heroes) ? job.heroes[i] : null;
               const hasBeastLook = String((c && c.beast) || '').trim().length > 0;
               const thumb = function (kind, label) {
                 if (!hero) return null;
@@ -824,8 +834,21 @@ const STEPS = [
               onChange: function (e) { setCfg(function (p) { return { ...p, aspectRatio: e.target.value }; }); },
             }, ASPECTS.map(function (a) { return h('option', { key: a[0], value: a[0] }, a[1]); }))),
           h('button', { className: 'cfl-chip', style: { fontWeight: 600 }, disabled: !!busy || running, onClick: makePlan },
-            busy === '正在写剧本…' ? '写剧本中…' : '🎬 生成剧本'),
-          h('button', { className: 'cfl-chip', title: '导入之前导出的方案 json', onClick: importPlan }, '⇧ 导入方案')
+            busy ? '写剧本中…' : '🎬 生成剧本'),
+          h('button', { className: 'cfl-chip', title: '导入之前导出的方案 json', onClick: importPlan }, '⇧ 导入方案'),
+          h('button', {
+            className: 'cfl-chip',
+            title: '清空当前的剧本、定妆与静帧引用，从零开始',
+            onClick: function () {
+              if (plan && !window.confirm('新建会清掉当前剧本和面板里的任务，确定？')) return;
+              setPlan(null); setLint(null); setJob(null); setOpenShot(null); setError('');
+              setCfg(function (p) { return { ...p, theme: '', style: '' }; });
+              try {
+                window.localStorage.removeItem(PLAN_RUN_KEY);
+                window.localStorage.setItem(FORM_KEY, JSON.stringify({ cfg: { ...CFG_DEFAULTS }, plan: null }));
+              } catch { /* ignore */ }
+            },
+          }, '＋ 新建')
         ),
 
         error ? h('div', { style: { color: '#e05c5c', fontSize: '13px', marginTop: '8px' } }, error) : null,
