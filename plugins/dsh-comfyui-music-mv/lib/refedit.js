@@ -94,15 +94,20 @@ export function shotForm(shot) {
  * 一张图只代表一个形态——喂错图，模型就会把狗画成人。
  * 过渡形态（半骨半皮 / 半人半兽）是第三种图：变形镜只喂它，否则干净定妆图会把变形拽回去。
  */
-export function refsForShot(job, shot, max = 2) {
+export function refsForShot(job, shot, max = 3) {
   const heroes = Array.isArray(job && job.heroes) ? job.heroes : [];
-  if (!heroes.length) return { refs: [], labels: [] };
+  const plates = Array.isArray(job && job.plates) ? job.plates : [];
+  if (!heroes.length && !plates.length) return { refs: [], labels: [] };
   const cast = Array.isArray(shot && shot.cast) ? shot.cast.map((x) => String(x).trim()).filter(Boolean) : [];
   const pool = cast.length ? heroes.filter((h) => cast.includes(String(h.label || '').trim())) : heroes;
   const form = shotForm(shot);
   const wantTrans = String((shot && shot.form) || '') === 'trans';
   const refs = [];
   const labels = [];
+  // 地点定妆排在最后：前面一两位永远是角色，模型对"参考图 1/2 是人"最敏感。
+  const sceneNo = Number(shot && shot.sceneNo) || 0;
+  const plate = plates.find((p) => Array.isArray(p.sceneNos) && p.sceneNos.includes(sceneNo));
+  const roomCap = plate ? Math.max(1, max - 1) : max;
   for (const h of pool) {
     const name = String(h.label || '').trim();
     const wantHuman = form === 'human';
@@ -112,16 +117,26 @@ export function refsForShot(job, shot, max = 2) {
     if (!comfy) continue;
     refs.push(comfy);
     labels.push(wantTrans ? `${name}的过渡形态` : (wantHuman ? `${name}的人形` : `${name}的本体`));
-    if (refs.length >= max) break;
+    if (refs.length >= roomCap) break;
+  }
+  if (plate && plate.comfy) {
+    refs.push(plate.comfy);
+    labels.push(`${plate.heading || plate.key}的空间`);
   }
   return { refs, labels };
 }
 
 /** 喂给 Qwen 的话术：先认人，再演戏。两张定妆图时必须点名"这是两个角色"。 */
 export function refInstruction(refLabels, sceneText, form = 'human') {
-  const names = (Array.isArray(refLabels) ? refLabels : []).filter(Boolean).slice(0, 2);
+  const all = (Array.isArray(refLabels) ? refLabels : []).filter(Boolean);
+  const isSpace = (l) => /的空间$/.test(l);
+  const names = all.filter((l) => !isSpace(l)).slice(0, 3);
+  const spaceLabel = all.find(isSpace);
+  const spaceLine = spaceLabel
+    ? `参考图 ${all.indexOf(spaceLabel) + 1} 不是人物，是这一场的地点定妆：背景必须是这个空间——同一间屋、同样的陈设位置、同样的光源方向，不要换房间、不要改墙色、不要添家具。`
+    : '';
   const head = names.length >= 2
-    ? `画面里有 ${names.length} 个完全不同的角色，绝对不要融合成一个：参考图 1 是${names[0]}，参考图 2 是${names[1]}。`
+    ? `画面里有 ${names.length} 个完全不同的角色，绝对不要融合成一个：${names.map((n, i) => `参考图 ${all.indexOf(n) + 1} 是${n}`).join('，')}。`
     : `参考图是${names[0] || '角色'}的定妆照，整张图只有这一个角色，不要添加别的生物。`;
   const guard = form === 'trans'
     ? '这一镜拍的是"正在变"的那一瞬：身体一半是骨或兽，一半已经长成皮肉或人形，两种质地同时出现在同一个人身上，接缝处可见；不要画成完全的人，也不要画成完全的骨或狗。'
@@ -130,6 +145,7 @@ export function refInstruction(refLabels, sceneText, form = 'human') {
       : '这一镜出的是人形：不要画成狗，不要留兽耳或尾巴，不要露出骨架。');
   return [
     head,
+    spaceLine,
     guard,
     '长相、毛色、发型、服装、配饰（项圈、铜牌、骨纹）必须与参考图完全一致，不要换脸、不要换毛色、不要改配饰。',
     '只改变场景、机位、光线和动作。整体曝光正常，主体在画面里清楚可见，不要压得过暗。',

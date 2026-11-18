@@ -131,7 +131,21 @@ function heroesSection(job, ctx) {
     }
   }
   if (!cards.length) return '';
-  return `<h2>定妆 · 每个角色三套外形</h2><p class="meta">原形（动物 / 骨架）· 人形（人）· 过渡形态（正在变的那一瞬）。静帧按镜头形态取图。</p><div class="heroes">${cards.join('')}</div>`;
+  return `<h2>定妆 · 每个角色三套外形</h2><p class="meta">原形（动物 / 骨架）· 人形（人）· 过渡形态（正在变的那一瞬）。静帧按镜头形态取图。</p><div class="heroes">${cards.join('')}</div>${platesSection(job, ctx)}`;
+}
+
+/** 地点定妆：每个地点一张空镜，这一场的每一镜都拿它当空间参考。 */
+function platesSection(job, ctx) {
+  const plates = Array.isArray(job && job.plates) ? job.plates : [];
+  const cards = [];
+  for (const p of plates) {
+    const uri = thumbUri(p.file, 560, ctx);
+    if (!uri) continue;
+    const shots = Array.isArray(p.shots) ? p.shots.join('、') : '';
+    cards.push(`<div class="fig"><img src="${uri}"><p><b>${esc(p.key || '')}</b>　${esc(p.heading || '')}<br><span class="n2">用于第 ${esc(shots)} 镜</span></p></div>`);
+  }
+  if (!cards.length) return '';
+  return `<h2>地点 · 每个地点一张空镜</h2><p class="meta">静帧生成时作为空间参考喂进参考图：同一间屋、同样的陈设位置、同样的光源方向。</p><div class="heroes">${cards.join('')}</div>`;
 }
 
 /** 分镜板。 */

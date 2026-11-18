@@ -24,6 +24,7 @@ import {
   fixSizeRuns,
   linkWarmProp,
   assignPropSlots, forceSignShot, ensureOtsPair, dedupePerformance, dedupeLabels,
+  planLocations, scenePlatePrompt,
 } from './lib/mv.js';
 import { vocab, cameraSummary } from './lib/shotlang.js';
 import { probeFfmpeg, stitchWithTransitions, concatAudio, composeTransHero } from './lib/ffmpeg.js';
@@ -356,6 +357,41 @@ async function renderHero(client, job, plan, character, index, params) {
   return entry;
 }
 
+/**
+ * 地点定妆图：一场（严格说是一个地点）出一张空镜。
+ * 为什么要它：静帧只喂角色参考图，背景全靠文字，同一间修表店会画成十二间店。
+ */
+async function renderPlate(client, job, plan, location, index, params) {
+  const prompt = scenePlatePrompt(plan, location);
+  const built = await buildT2iPrompt({
+    prompt,
+    aspectRatio: params.aspectRatio || '16:9 (Widescreen)',
+    megapixels: params.plateMegapixels || 1.2,
+    steps: params.heroSteps || 8,
+    filenamePrefix: `mv_plate/${job.id}_${index + 1}`,
+  });
+  applyModelOverrides(built.prompt, params.models);
+  const promptId = await client.submit(built.prompt);
+  const result = await client.wait(promptId, 1800000);
+  const item = firstOutputImage(result, '29');
+  if (!item) throw new Error(`地点「${location.key}」的定妆图没有产出`);
+  const buffer = await fetchComfyImage(client, item);
+  const dir = path.join(DATA_DIR, job.id, 'plates');
+  await fs.mkdir(dir, { recursive: true });
+  const stamp = Date.now().toString(36);
+  const file = path.join(dir, `plate_${index + 1}_${stamp}.png`);
+  await fs.writeFile(file, buffer);
+  const comfy = await client.upload(buffer, `mv_plate_${job.id}_${index + 1}_${stamp}.png`, 'image/png');
+  return {
+    key: location.key,
+    heading: location.heading,
+    sceneNos: location.sceneNos,
+    shots: location.shots.map((s) => s.index + 1),
+    file,
+    comfy,
+  };
+}
+
 async function renderFrame(client, job, plan, shot, params) {
   // 有定妆图就走"认人"链路：Qwen 参考编辑，角色长相全片锁死
   const sceneText = composeFramePrompt(plan, shot);
@@ -364,7 +400,7 @@ async function renderFrame(client, job, plan, shot, params) {
   const otsFocus = String(shot.composition || '') === 'ots' && (shot.cast || []).length >= 2
     ? { ...shot, cast: shot.cast.slice(0, 1) }
     : shot;
-  const pick = params.frameMode === 't2i' ? { refs: [], labels: [] } : refsForShot(job, otsFocus, 2);
+  const pick = params.frameMode === 't2i' ? { refs: [], labels: [] } : refsForShot(job, otsFocus, 3);
   if (pick.refs.length) {
     const graph = buildRefEditGraph(await refTemplate(), {
       refs: pick.refs,
@@ -739,6 +775,33 @@ async function execute(job, params) {
     heroes,
     hero: heroes[0] ? { file: heroes[0].file, name: heroes[0].comfy } : null,
   });
+
+  /* 4b. 地点定妆图：每个地点一张空镜，之后这一场的每一镜都拿它当空间参考 */
+  if (params.scenePlates !== false) {
+    const locations = planLocations(plan);
+    const canResume = Array.isArray(job.plates) && job.plates.length && params.resume !== false;
+    if (canResume && job.plates.length >= locations.length) {
+      // 续跑：已有的直接用
+    } else if (locations.length) {
+      await jobPatch(job.id, { stage: 'plates', stageLabel: `生成地点定妆图（0/${locations.length}）` });
+      const plates = canResume ? [...job.plates] : [];
+      for (let i = 0; i < locations.length; i += 1) {
+        const loc = locations[i];
+        const done = plates.find((p) => p && p.key === loc.key && p.comfy);
+        if (done) continue;
+        await jobPatch(job.id, { stageLabel: `生成地点定妆图（${i + 1}/${locations.length}·${loc.key}）` });
+        try {
+          const plate = await renderPlate(client, job, plan, loc, i, params);
+          plates[i] = plate;
+          await jobPatch(job.id, { plates: plates.filter(Boolean) });
+        } catch (error) {
+          // 地点定妆失败不该毁掉整个任务：静帧照旧按文字生成
+          await jobPatch(job.id, { plates: plates.filter(Boolean), plateWarning: String(error && error.message || error) });
+        }
+      }
+      await jobPatch(job.id, { plates: plates.filter(Boolean) });
+    }
+  }
 
   /* 5. 静帧：每镜一张，先给人看，不满意可以单张重 roll */
   const phase = String(params.phase || 'all');
@@ -1658,6 +1721,37 @@ export function apply(ctx) {
       },
     }));
 
+    /** 重出地点定妆图：每个地点一张空镜，不动已经出好的静帧与视频。 */
+    disposers.push(webServer.register({
+      kind: 'exact',
+      path: '/api/comfyui-music-mv/plates',
+      handler: async (request, response) => {
+        if (request.method !== 'POST') { sendJson(response, 405, { error: 'method_not_allowed' }); return; }
+        if (!sameOrigin(request)) { sendJson(response, 403, { error: 'forbidden: same-origin only' }); return; }
+        let body = null;
+        try { body = await readJsonBody(request); } catch { body = null; }
+        const id = String((body && body.id) || '');
+        await jobStore.refresh();
+        const job = jobStore.get(id);
+        if (!job) { sendJson(response, 404, { error: 'not_found', id }); return; }
+        const locations = planLocations(job.plan);
+        if (!locations.length) { sendJson(response, 400, { error: 'no_locations' }); return; }
+        try {
+          const client = new ComfyClient();
+          if (!(await client.alive())) throw new Error('连不上 ComfyUI');
+          const plates = [];
+          for (let i = 0; i < locations.length; i += 1) {
+            const plate = await renderPlate(client, job, job.plan, locations[i], i, job.params || {});
+            plates.push(plate);
+            await jobStore.patch(id, { plates: plates.slice() });
+          }
+          sendJson(response, 200, { ok: true, plates });
+        } catch (error) {
+          sendJson(response, 500, { error: 'plates_failed', message: String(error && error.message || error) });
+        }
+      },
+    }));
+
     /** 重出定妆图：每个角色按「原形 / 人形」两张重生成，不动已经出好的静帧与视频。 */
     disposers.push(webServer.register({
       kind: 'exact',
@@ -1909,6 +2003,21 @@ export function apply(ctx) {
         const file = kind === 'human' ? hero.humanFile : kind === 'trans' ? hero.transFile : hero.file;
         if (!file) { sendJson(response, 404, { error: 'no_' + kind, id, index }); return; }
         await streamFile(request, response, file, 'image/png');
+      },
+    }));
+
+    disposers.push(webServer.register({
+      kind: 'exact',
+      path: '/api/comfyui-music-mv/scene-img',
+      handler: async (request, response) => {
+        const url = new URL(request.url, 'http://localhost');
+        const id = String(url.searchParams.get('id') || '');
+        const index = Number(url.searchParams.get('index') || 0);
+        await jobStore.refresh();
+        const job = jobStore.get(id);
+        const plate = job && Array.isArray(job.plates) ? job.plates[index] : null;
+        if (!plate || !plate.file) { sendJson(response, 404, { error: 'not_found', id, index }); return; }
+        await streamFile(request, response, plate.file, 'image/png');
       },
     }));
 

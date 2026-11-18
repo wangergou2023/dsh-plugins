@@ -742,8 +742,98 @@ export function normalizePlan(data, opts = {}) {
     },
     duration,
     shotCount: shots.length,
-    shots,
+    shots: attachSceneNos(shots, Array.isArray(data && data.scenes) ? data.scenes.map((s, i) => ({
+      no: String((s && (s.no || s.number || s.index)) || i + 1),
+      heading: String((s && (s.heading || s.slug || s.title || s.location)) || '').trim(),
+      action: String((s && (s.action || s.description || s.body)) || '').trim(),
+    })) : []),
   };
+}
+
+/**
+ * 每一镜属于哪一场。
+ * 剧本里的镜头只带一句 scene 文本、没有场号，而场景定妆图是按「场」出的，
+ * 所以这里按二字组重合度把镜头归到场，并且**必须单调不减**——
+ * 时间轴是顺的，第 5 镜不可能回到第 1 场。
+ */
+export function attachSceneNos(shots, scenes) {
+  const list = Array.isArray(shots) ? shots : [];
+  const scs = Array.isArray(scenes) ? scenes : [];
+  if (!list.length || !scs.length) return list;
+  const grams = (t) => {
+    const s = String(t || '').replace(/[，。；、,.．·\-—\s]/g, '');
+    const out = new Set();
+    for (let i = 0; i < s.length - 1; i += 1) out.add(s.slice(i, i + 2));
+    return out;
+  };
+  const sceneGrams = scs.map((sc) => grams(`${sc.heading || ''}${sc.action || ''}`));
+  let cursor = 0;
+  return list.map((shot) => {
+    const g = grams(`${shot.scene || ''}${shot.action || ''}`);
+    let best = cursor;
+    let bestScore = -1;
+    for (let i = cursor; i < scs.length; i += 1) {
+      let hit = 0;
+      for (const x of g) if (sceneGrams[i].has(x)) hit += 1;
+      // 越靠后的场加权略低，避免所有镜头都被算到后面某一场里
+      const score = hit - (i - cursor) * 0.35;
+      if (score > bestScore) { bestScore = score; best = i; }
+    }
+    cursor = best;
+    return { ...shot, sceneNo: best + 1 };
+  });
+}
+
+/**
+ * 场景定妆图的提示词：只拍空间，不拍人。
+ * 为什么需要它：现在每镜只有角色参考图，背景全靠文字，同一间修表店会画成十二间店。
+ */
+/**
+ * 把「场」按地名归成一个「地点」。
+ * 剧本常把一个地方拆成好几场（内景·修表店·深夜 / 内景·修表店·清晨），
+ * 地点定妆图是按地点出的，不是按场出的——不然同一间店会出六张不同的图。
+ */
+export function planLocations(plan) {
+  const scenes = Array.isArray(plan && plan.scenes) ? plan.scenes : [];
+  const rawShots = Array.isArray(plan && plan.shots) ? plan.shots : [];
+  // 老任务的 plan 里没有 sceneNo（那是后加的字段），这里就地补一次，调用方不用关心
+  const shots = rawShots.some((s) => s && s.sceneNo) ? rawShots : attachSceneNos(rawShots, scenes);
+  const strip = /^(内景|外景|内外景|日内|日外|日|夜|清晨|黄昏|深夜|早晨|午后|傍晚|凌晨)$/;
+  const keyOf = (heading) => {
+    const parts = String(heading || '').split(/[·・•|/／]/).map((x) => x.trim()).filter(Boolean);
+    const kept = parts.filter((p) => !strip.test(p));
+    return kept.length ? kept[kept.length - 1] : (parts[parts.length - 1] || String(heading || '').trim());
+  };
+  const byKey = new Map();
+  scenes.forEach((sc, i) => {
+    const key = keyOf(sc.heading) || `地点${i + 1}`;
+    if (!byKey.has(key)) byKey.set(key, { key, heading: sc.heading || key, sceneNos: [], shots: [] });
+    byKey.get(key).sceneNos.push(Number(sc.no) || i + 1);
+  });
+  for (const loc of byKey.values()) {
+    loc.shots = shots.filter((s) => loc.sceneNos.includes(Number(s.sceneNo)));
+  }
+  return [...byKey.values()].filter((loc) => loc.shots.length);
+}
+
+export function scenePlatePrompt(plan, location) {
+  const heading = String((location && location.heading) || location && location.key || '').trim();
+  // 用这一场每镜的 scene 文本（它们本来就是"空间长什么样"），不要用场次正文——
+  // 场次正文里全是人物动作（"他右手拿螺丝刀"），写进去空镜里就会长出一个老头。
+  const bits = [];
+  for (const s of (Array.isArray(location && location.shots) ? location.shots : [])) {
+    const t = String((s && s.scene) || '').trim().replace(/[。；;，,、]+$/, '');
+    if (t && !bits.includes(t)) bits.push(t);
+  }
+  const look = String((plan && plan.look) || '').trim().replace(/[。；;]+$/, '');
+  return [
+    `地点定妆照：${heading || '室内空间'}，同一个空间的全貌，空镜`,
+    bits.length ? `空间里有：${bits.slice(0, 4).join('；')}` : '',
+    '画面里完全没有人物、没有脸、没有手，只有环境和陈设',
+    '广角，正视或轻微斜视，光线稳定，材质与磨损看得清',
+    look,
+    '电影剧照，不要文字、不要水印',
+  ].filter(Boolean).join('。') + '。';
 }
 
 /* --------------------------- 角色 --------------------------- */
