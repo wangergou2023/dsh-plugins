@@ -34,7 +34,95 @@ window.__ModuleLoader__.load({
       ['21:9 (Cinematic)', '21:9'],
     ];
 
-    /** 点缩略图看大图：自己搭一层遮罩，不依赖宿主有没有 lightbox。 */
+    /** 面板样式：一次性注入，作用域限在 .mv 里，不去污染宿主。 */
+const STYLE_ID = 'cfl-mv-style';
+
+function ensureStyle() {
+  if (document.getElementById(STYLE_ID)) return;
+  const style = document.createElement('style');
+  style.id = STYLE_ID;
+  style.textContent = [
+    '.mv { --mv-line: rgba(128,128,128,0.20); --mv-line-strong: rgba(128,128,128,0.32);',
+    '  --mv-soft: rgba(128,128,128,0.06); --mv-softer: rgba(128,128,128,0.035);',
+    '  --mv-dim: rgba(128,128,128,0.95); --mv-ink: currentColor;',
+    '  height: 100%; overflow-y: auto; overflow-x: hidden; box-sizing: border-box; overscroll-behavior: contain; }',
+    '.mv * { box-sizing: border-box; }',
+    '.mv-wrap { max-width: 1040px; margin: 0 auto; padding: 14px 20px 40px; font-size: 13px; line-height: 1.6; }',
+    /* header */
+    '.mv-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }',
+    '.mv-title { margin: 0; font-size: 19px; font-weight: 650; letter-spacing: .2px; }',
+    '.mv-sub { margin: 2px 0 0; font-size: 12px; color: var(--mv-dim); opacity: .72; }',
+    '.mv-pill { font-size: 11px; padding: 2px 9px; border-radius: 999px; border: 1px solid var(--mv-line-strong);',
+    '  color: var(--mv-dim); white-space: nowrap; }',
+    '.mv-pill.ok { color: #5abe8c; border-color: rgba(90,190,140,.55); }',
+    '.mv-pill.warn { opacity: .65; }',
+    /* stepper */
+    '.mv-steps { display: flex; align-items: center; gap: 4px; flex-wrap: wrap; margin: 16px 0 18px; }',
+    '.mv-step { font-size: 12px; padding: 4px 11px; border-radius: 999px; border: 1px solid var(--mv-line);',
+    '  color: var(--mv-dim); font-variant-numeric: tabular-nums; }',
+    '.mv-step.on { border-color: rgba(120,150,255,.65); color: rgba(120,150,255,1); background: rgba(120,150,255,.10); font-weight: 600; }',
+    '.mv-sep { width: 10px; height: 1px; background: var(--mv-line); }',
+    /* card */
+    '.mv-card { border: 1px solid var(--mv-line); border-radius: 12px; padding: 14px 16px; margin-bottom: 14px;',
+    '  background: var(--mv-softer); }',
+    '.mv-card-h { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 10px; }',
+    '.mv-card-t { font-size: 14px; font-weight: 650; }',
+    '.mv-card-sub { font-size: 12px; color: var(--mv-dim); opacity: .75; }',
+    '.mv-note { font-size: 12px; color: var(--mv-dim); opacity: .7; }',
+    /* form */
+    '.mv-field { display: flex; flex-direction: column; gap: 4px; }',
+    '.mv-label { font-size: 11px; color: var(--mv-dim); opacity: .8; letter-spacing: .3px; }',
+    '.mv-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(108px, 168px)); gap: 12px; align-items: end; margin-top: 14px; }',
+    '.mv-actions { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin-top: 12px; }',
+    '.mv-actions .cfl-chip { font-size: 12.5px; padding: 5px 12px; border-radius: 8px; }',
+    '.mv-input, .mv-select, .mv-ta { width: 100%; font-size: 13px; padding: 6px 9px; border-radius: 8px;',
+    '  border: 1px solid var(--mv-line-strong); background: transparent; color: inherit; font-family: inherit; }',
+    '.mv-ta { resize: vertical; min-height: 58px; line-height: 1.55; }',
+    '.mv-ta:focus, .mv-input:focus, .mv-select:focus { outline: none; border-color: rgba(120,150,255,.7); }',
+    /* plan head */
+    '.mv-plan-top { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }',
+    '.mv-plan-t { font-size: 16px; font-weight: 650; }',
+    '.mv-logline { margin-top: 8px; font-size: 13px; line-height: 1.7; }',
+    '.mv-arc { margin-top: 4px; font-size: 12.5px; color: var(--mv-dim); opacity: .8; line-height: 1.6; }',
+    '.mv-lint { display: flex; gap: 5px; flex-wrap: wrap; align-items: center; margin-top: 10px; }',
+    '.mv-chip { font-size: 11px; padding: 1.5px 7px; border-radius: 999px; border: 1px solid var(--mv-line-strong);',
+    '  color: var(--mv-dim); cursor: help; }',
+    '.mv-chip.ok { color: rgba(90,190,140,.95); border-color: rgba(90,190,140,.35); }',
+    '.mv-chip.bad { color: rgba(224,112,104,.98); border-color: rgba(224,112,104,.42); }',
+    '.mv-score { font-size: 12px; font-weight: 650; margin-right: 4px; font-variant-numeric: tabular-nums; }',
+    /* scenes */
+    '.mv-scenes { margin-top: 10px; }',
+    '.mv-scene { border: 1px solid var(--mv-line); border-radius: 10px; padding: 12px 14px; margin-bottom: 10px;',
+    '  background: var(--mv-soft); }',
+    '.mv-scene-h { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; }',
+    '.mv-scene-no { font-size: 11px; font-weight: 650; letter-spacing: .5px; padding: 1px 7px; border-radius: 6px;',
+    '  background: rgba(120,150,255,.14); color: rgba(120,150,255,1); }',
+    '.mv-scene-hd { font-size: 12.5px; color: var(--mv-dim); }',
+    '.mv-scene-body { margin-top: 7px; font-size: 13.5px; line-height: 1.85; }',
+    '.mv-meta { margin-top: 9px; display: grid; gap: 5px; }',
+    '.mv-meta-row { display: grid; grid-template-columns: 34px 1fr; gap: 8px; align-items: baseline; }',
+    '.mv-meta-k { font-size: 10.5px; letter-spacing: .5px; color: var(--mv-dim); opacity: .7; padding-top: 2px; }',
+    '.mv-meta-v { font-size: 12.5px; line-height: 1.7; }',
+    '.mv-meta-row.perf .mv-meta-v { color: #c9a45c; }',
+    '.mv-meta-row.sound .mv-meta-v { color: var(--mv-dim); opacity: .85; }',
+    '.mv-meta-row.lyric .mv-meta-v { font-style: italic; color: var(--mv-dim); }',
+    /* characters */
+    '.mv-chars { display: grid; gap: 10px; margin-top: 6px; }',
+    '.mv-char { display: grid; grid-template-columns: auto 128px 1fr auto; gap: 10px; align-items: start;',
+    '  border: 1px solid var(--mv-line); border-radius: 10px; padding: 10px 12px; background: var(--mv-soft); }',
+    '.mv-char-thumbs { display: flex; gap: 5px; }',
+    '.mv-thumb { width: 56px; height: 56px; border-radius: 8px; object-fit: cover; cursor: zoom-in;',
+    '  border: 1px solid var(--mv-line-strong); }',
+    '.mv-thumb-empty { width: 56px; height: 56px; border-radius: 8px; border: 1px dashed var(--mv-line-strong);',
+    '  display: flex; align-items: center; justify-content: center; font-size: 10px; color: var(--mv-dim); opacity: .6; }',
+    '.mv-thumb-label { font-size: 9.5px; text-align: center; color: var(--mv-dim); opacity: .7; margin-top: 2px; }',
+    '.mv-char-body { display: flex; flex-direction: column; gap: 6px; }',
+    '@media (max-width: 720px) { .mv-char { grid-template-columns: 1fr; } .mv-wrap { padding: 12px; } }',
+  ].join('\n');
+  document.head.appendChild(style);
+}
+
+/** 点缩略图看大图：自己搭一层遮罩，不依赖宿主有没有 lightbox。 */
 function showZoom(src) {
   const mask = document.createElement('div');
   mask.style.cssText = 'position:fixed;inset:0;z-index:99999;background:rgba(0,0,0,0.86);display:flex;align-items:center;justify-content:center;cursor:zoom-out';
@@ -168,6 +256,7 @@ const STEPS = [
     }
 
     function MvPanel() {
+      ensureStyle();
       const [initial] = React.useState(function () { return loadForm(); });
       const [meta, setMeta] = React.useState(null);
       const [metaError, setMetaError] = React.useState('');
@@ -435,12 +524,12 @@ const STEPS = [
       }
 
       function num(labelText, key, min, max, step) {
-        return h('label', { key: key, style: { display: 'flex', flexDirection: 'column', gap: '2px', ...small } },
-          labelText,
+        return h('label', { key: key, className: 'mv-field' },
+          h('span', { className: 'mv-label' }, labelText),
           h('input', {
             type: 'number', min: min, max: max, step: step, value: cfg[key],
+            className: 'mv-input',
             onChange: function (e) { setCfg(function (p) { return { ...p, [key]: Number(e.target.value) }; }); },
-            style: { width: '92px' },
           })
         );
       }
@@ -455,7 +544,7 @@ const STEPS = [
 
       /* ---------------- 步骤条 ---------------- */
       const stageIndex = job ? STEPS.findIndex(function (s) { return s.key === job.stage; }) : -1;
-      const stepper = h('div', { style: { display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap', margin: '10px 0' } },
+      const stepper = h('div', { className: 'mv-steps' },
         STEPS.map(function (s, i) {
           const active = job && job.stage === s.key;
           const passed = job && (stageIndex > i || job.status === 'done');
@@ -594,63 +683,67 @@ const STEPS = [
 
       /* ---------------- 渲染 ---------------- */
       const planBody = plan
-        ? h('div', { style: { marginTop: '12px', border: '1px solid rgba(128,128,128,0.22)', borderRadius: '10px', padding: '10px' } },
-            h('div', { style: { display: 'flex', alignItems: 'baseline', gap: '10px', flexWrap: 'wrap' } },
-              h('div', { style: { fontSize: '15px', fontWeight: 600 } }, '《' + (plan.title || '未命名') + '》'),
-              h('span', { style: muted }, plan.duration + 's · ' + (plan.shots || []).length + ' 镜')
+        ? h('div', { className: 'mv-card' },
+            h('div', { className: 'mv-card-h' },
+              h('div', { className: 'mv-plan-t' }, '《' + (plan.title || '未命名') + '》'),
+              h('span', { className: 'mv-card-sub' }, plan.duration + 's · ' + (plan.shots || []).length + ' 镜 · ' + ((plan.scenes || []).length) + ' 场'),
+              lint ? h('span', {
+                className: 'mv-score',
+                style: { marginLeft: 'auto', color: lint.score >= 85 ? '#4a9d63' : (lint.score >= 70 ? '#c9a45c' : '#c0574f') },
+              }, '体检 ' + lint.score) : null
             ),
-            lint ? h('div', { style: { marginTop: '6px', display: 'flex', gap: '5px', flexWrap: 'wrap', alignItems: 'center' } },
-              h('span', {
-                style: { fontSize: '12px', fontWeight: 600, marginRight: '2px',
-                  color: lint.score >= 85 ? '#4a9d63' : (lint.score >= 70 ? '#c9a45c' : '#c0574f') },
-              }, '剧本体检 ' + lint.score),
+            lint ? h('div', { className: 'mv-lint' },
               ...lint.checks.map(function (c, i) {
                 return h('span', {
                   key: 'lk' + i, title: c.label + '：' + c.detail,
-                  style: {
-                    fontSize: '11px', padding: '1px 6px', borderRadius: '9px', cursor: 'help',
-                    border: '1px solid ' + (c.ok ? 'rgba(74,157,99,0.45)' : 'rgba(192,87,79,0.55)'),
-                    color: c.ok ? 'rgba(74,157,99,0.95)' : 'rgba(192,87,79,0.98)',
-                  },
+                  className: 'mv-chip ' + (c.ok ? 'ok' : 'bad'),
                 }, (c.ok ? '✓ ' : '✗ ') + c.label);
               })
             ) : null,
-            plan.story && plan.story.logline ? h('div', { style: { ...small, marginTop: '4px' } }, '故事：' + plan.story.logline) : null,
-            plan.story && plan.story.arc ? h('div', { style: muted }, '情绪：' + plan.story.arc) : null,
+            plan.story && plan.story.logline ? h('div', { className: 'mv-logline' }, plan.story.logline) : null,
+            plan.story && plan.story.arc ? h('div', { className: 'mv-arc' }, '情绪线　' + plan.story.arc) : null,
             (plan.scenes && plan.scenes.length)
-              ? h('div', { style: { marginTop: '10px' } },
-                  h('div', { style: { display: 'flex', alignItems: 'center', gap: '8px' } },
-                    h('div', { style: { ...muted, marginTop: '4px' } }, '剧本（' + plan.scenes.length + ' 场）'),
+              ? h('div', { style: { marginTop: '14px' } },
+                  h('div', { className: 'mv-card-h', style: { marginBottom: '8px' } },
+                    h('div', { className: 'mv-card-t' }, '剧本'),
+                    h('span', { className: 'mv-card-sub' }, plan.scenes.length + ' 场'),
                     h('button', {
-                      className: 'cfl-chip', style: { fontSize: '11px' },
+                      className: 'cfl-chip', style: { fontSize: '11px', marginLeft: 'auto' },
                       onClick: function () { setScriptOpen(!scriptOpen); },
-                    }, scriptOpen ? '收起剧本' : '展开剧本')
+                    }, scriptOpen ? '收起' : '展开')
                   ),
-                  scriptOpen ? h('div', {
-                    style: {
-                      maxHeight: '460px', overflowY: 'auto', marginTop: '4px',
-                      border: '1px solid rgba(128,128,128,0.18)', borderRadius: '8px', padding: '10px',
-                      background: 'rgba(128,128,128,0.03)',
-                    },
-                  },
+                  scriptOpen ? h('div', { className: 'mv-scenes' },
                     ...plan.scenes.map(function (s, i) {
-                      const perfStyle = { fontSize: '12.5px', marginTop: '3px', color: '#c9a45c', lineHeight: 1.5 };
-                      const actStyle = { fontSize: '12.5px', marginTop: '3px', lineHeight: 1.5 };
-                      return h('div', {
-                        key: 'sc' + i,
-                        style: i ? { marginTop: '10px', paddingTop: '9px', borderTop: '1px solid rgba(128,128,128,0.14)' } : null,
-                      },
-                        h('div', { style: { fontSize: '13px', fontWeight: 600 } }, '场' + (s.no || i + 1) + (s.heading ? '　' + s.heading : '')),
-                        s.action ? h('div', { style: actStyle }, s.action) : null,
-                        s.performance ? h('div', { style: perfStyle }, '表演｜' + s.performance) : null,
-                        s.sound ? h('div', { style: { ...muted, marginTop: '3px' } }, '声音｜' + s.sound) : null,
-                        s.lyric ? h('div', { style: { ...muted, marginTop: '2px', fontStyle: 'italic' } }, '唱｜' + s.lyric) : null
+                      const meta = function (kind, label, value) {
+                        if (!value) return null;
+                        return h('div', { className: 'mv-meta-row ' + kind },
+                          h('div', { className: 'mv-meta-k' }, label),
+                          h('div', { className: 'mv-meta-v' }, value)
+                        );
+                      };
+                      return h('div', { key: 'sc' + i, className: 'mv-scene' },
+                        h('div', { className: 'mv-scene-h' },
+                          h('span', { className: 'mv-scene-no' }, '场' + (s.no || i + 1)),
+                          s.heading ? h('span', { className: 'mv-scene-hd' }, s.heading) : null
+                        ),
+                        s.action ? h('div', { className: 'mv-scene-body' }, s.action) : null,
+                        (s.performance || s.sound || s.lyric)
+                          ? h('div', { className: 'mv-meta' },
+                              meta('perf', '表演', s.performance),
+                              meta('sound', '声音', s.sound),
+                              meta('lyric', '唱', s.lyric)
+                            )
+                          : null
                       );
                     })
                   ) : null
                 )
               : null,
-            h('div', { style: { ...muted, marginTop: '8px' } }, '角色（每个角色一张定妆图，全片复用）'),
+            h('div', { className: 'mv-card-h', style: { marginTop: '16px', marginBottom: '2px' } },
+              h('div', { className: 'mv-card-t' }, '角色定妆'),
+              h('span', { className: 'mv-card-sub' }, '每个角色一张，全片复用')
+            ),
+            h('div', { className: 'mv-chars' },
             ...planCharacters().map(function (c, i) {
               const list = planCharacters();
               // 旧项目的定妆图不能挂到新剧本的角色上：只有 job 与当前 plan 对得上时才显示。
@@ -666,14 +759,14 @@ const STEPS = [
                 if (kind === 'human' && hero.file && hero.file === hero.humanFile) return null;
                 const url = '/api/comfyui-music-mv/hero-img?id=' + encodeURIComponent(job.id)
                   + '&index=' + i + '&kind=' + kind + '&v=' + encodeURIComponent(String(has).slice(-16));
-                return h('div', { style: { display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '2px' } },
+                return h('div', { key: kind, style: { display: 'flex', flexDirection: 'column', alignItems: 'center' } },
                   h('img', {
                     src: url,
                     title: label,
-                    style: { width: '54px', height: '54px', objectFit: 'cover', borderRadius: '4px', border: '1px solid rgba(255,255,255,0.12)', cursor: 'zoom-in' },
+                    className: 'mv-thumb',
                     onClick: function () { showZoom(url); },
                   }),
-                  h('div', { style: { fontSize: '9px', color: 'rgba(255,255,255,0.5)' } }, label)
+                  h('div', { className: 'mv-thumb-label' }, label)
                 );
               };
               // 有本体（神兽/骨架）才展示三套；纯人类角色只有一张定妆，别给他编一个"本体"。
@@ -684,18 +777,18 @@ const STEPS = [
                 : (job
                   ? [h('div', {
                     title: '这个角色还没出定妆图',
-                    style: { width: '54px', height: '54px', borderRadius: '4px', border: '1px dashed rgba(255,255,255,0.18)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '10px', color: 'rgba(255,255,255,0.45)', textAlign: 'center', lineHeight: '1.2' },
+                    className: 'mv-thumb-empty',
                   }, '未定妆')]
                   : []);
-              return h('div', { key: i, style: { display: 'flex', gap: '6px', marginBottom: '4px', alignItems: 'flex-start' } },
-                thumbs.length ? h('div', { style: { display: 'flex', gap: '5px' } }, ...thumbs) : null,
+              return h('div', { key: i, className: 'mv-char' },
+                thumbs.length ? h('div', { className: 'mv-char-thumbs' }, ...thumbs) : null,
                 h('input', {
                   value: c.name || '',
                   placeholder: '名字',
                   onChange: function (e) {
                     const next = list.slice(); next[i] = { ...next[i], name: e.target.value }; setCharacters(next);
                   },
-                  style: { width: '112px', fontSize: '12px' },
+                  className: 'mv-input', style: { width: '128px' },
                 }),
                 h('textarea', {
                   value: c.look || '',
@@ -704,14 +797,15 @@ const STEPS = [
                   onChange: function (e) {
                     const next = list.slice(); next[i] = { ...next[i], look: e.target.value }; setCharacters(next);
                   },
-                  style: { flex: 1, resize: 'vertical', fontFamily: 'inherit', fontSize: '12px' },
+                  className: 'mv-ta', style: { flex: 1, minHeight: '52px' },
                 }),
                 h('button', {
                   className: 'cfl-chip', style: { fontSize: '11px' }, title: '删掉这个角色',
                   onClick: function () { setCharacters(list.slice().filter(function (_, k) { return k !== i; })); },
                 }, '✕')
               );
-            }),
+            })
+            ),
             h('button', {
               className: 'cfl-chip', style: { fontSize: '12px' }, onClick: function () {
                 setCharacters(planCharacters().concat([{ name: '', look: '' }]));
@@ -783,72 +877,65 @@ const STEPS = [
         : null;
 
       // 根节点自己当滚动容器：宿主给的面板槽位不滚动，内容一多就被裁掉（滚轮完全不动）。
-      return h('div', {
-        style: {
-          padding: '4px 2px',
-          height: '100%',
-          maxHeight: '100%',
-          overflowY: 'auto',
-          overflowX: 'hidden',
-          boxSizing: 'border-box',
-          overscrollBehavior: 'contain',
-        },
-      },
-        h('div', { style: { display: 'flex', alignItems: 'baseline', gap: '10px', flexWrap: 'wrap' } },
-          h('h2', { style: { margin: 0, fontSize: '18px' } }, '音乐 MV'),
+      return h('div', { className: 'mv' },
+        h('div', { className: 'mv-wrap' },
+        h('div', { className: 'mv-head' },
+          h('h2', { className: 'mv-title' }, '音乐 MV'),
           h('span', { style: muted },
             online ? 'ComfyUI ' + meta.comfyui.version + (vram !== null ? ' · 空闲 ' + vram + ' GB' : '')
               : metaError ? '状态未知：' + metaError
               : !meta ? '正在连接…' : 'ComfyUI 离线'),
           online ? null : h('button', { className: 'cfl-chip', style: { fontSize: '11px' }, onClick: function () { loadMeta(0); } }, '重试'),
           h('span', {
-            style: {
-              fontSize: '11px', padding: '2px 8px', borderRadius: '999px',
-              border: '1px solid ' + (meta && meta.ffmpeg && meta.ffmpeg.ok ? 'rgba(90,190,140,0.6)' : 'rgba(128,128,128,0.3)'),
-              color: meta && meta.ffmpeg && meta.ffmpeg.ok ? '#5abe8c' : undefined,
-              opacity: meta && meta.ffmpeg && meta.ffmpeg.ok ? 1 : 0.6,
-            },
+            className: 'mv-pill ' + (meta && meta.ffmpeg && meta.ffmpeg.ok ? 'ok' : 'warn'),
             title: meta && meta.ffmpeg && meta.ffmpeg.ok ? String(meta.ffmpeg.version || '已检测到 ffmpeg') : '没找到 ffmpeg：镜头之间只能硬切',
           }, meta && meta.ffmpeg && meta.ffmpeg.ok ? '转场可用' : '转场不可用（硬切）')
         ),
-        h('div', { style: { ...muted, marginTop: '2px' } }, '主题 → 剧本 → 出歌 → 定妆 → 每镜静帧（可改可重 roll）→ 末帧接龙出视频 → 拼成一支 MV'),
+        h('div', { className: 'mv-sub' }, '主题 → 剧本 → 出歌 → 定妆 → 每镜静帧（可改可重 roll）→ 末帧接龙出视频 → 拼成一支 MV'),
         stepper,
 
-        // ① 主题
-        h('div', { style: { marginTop: '4px' } },
+        h('div', { className: 'mv-card' },
+          h('div', { className: 'mv-card-h' },
+            h('div', { className: 'mv-card-t' }, '主题'),
+            h('div', { className: 'mv-card-sub' }, '一句话就够，越具体越好')
+          ),
           h('textarea', {
+            className: 'mv-ta',
             value: cfg.theme,
             onChange: function (e) { setCfg(function (p) { return { ...p, theme: e.target.value }; }); },
             rows: 2,
             placeholder: '一句话说清想拍什么：失恋的男生在雨夜街头走了很久，最后在天亮时笑了一下',
-            style: { width: '100%', resize: 'vertical', fontFamily: 'inherit', fontSize: '13px' },
-          })
-        ),
-        h('div', { style: { display: 'flex', flexWrap: 'wrap', gap: '12px', alignItems: 'flex-end', marginTop: '8px' } },
+          }),
+        h('div', { className: 'mv-grid' },
           num('歌长(秒)', 'duration', 15, 600, 5),
           num('静帧(MP)', 'frameMegapixels', 1, 16, 0.5),
           num('视频(MP)', 'megapixels', 0.2, 1.0, 0.05),
-          h('label', { style: { display: 'flex', flexDirection: 'column', gap: '2px', ...small } }, '比例',
+          h('label', { className: 'mv-field' },
+            h('span', { className: 'mv-label' }, '比例'),
             h('select', {
+              className: 'mv-select',
               value: cfg.aspectRatio,
               onChange: function (e) { setCfg(function (p) { return { ...p, aspectRatio: e.target.value }; }); },
             }, ASPECTS.map(function (a) { return h('option', { key: a[0], value: a[0] }, a[1]); }))),
-          h('button', { className: 'cfl-chip', style: { fontWeight: 600 }, disabled: !!busy || running, onClick: makePlan },
-            busy ? '写剧本中…' : '🎬 生成剧本'),
-          h('button', { className: 'cfl-chip', title: '导入之前导出的方案 json', onClick: importPlan }, '⇧ 导入方案'),
-          h('button', {
-            className: 'cfl-chip',
-            title: '清空当前的剧本、定妆与静帧引用，从零开始',
-            onClick: function () {
-              if (plan && !window.confirm('新建会清掉当前剧本和面板里的任务，确定？')) return;
-              setPlan(null); setLint(null); setJob(null); setOpenShot(null); setError('');
-              setCfg(function (p) { return { ...p, theme: '', style: '' }; });
-              try {
-                window.localStorage.removeItem(PLAN_RUN_KEY);
-                window.localStorage.setItem(FORM_KEY, JSON.stringify({ cfg: { ...CFG_DEFAULTS }, plan: null }));
-              } catch { /* ignore */ }
-            },
-          }, '＋ 新建')
+        ),
+          h('div', { className: 'mv-actions' },
+            h('button', { className: 'cfl-chip', style: { fontWeight: 600 }, disabled: !!busy || running, onClick: makePlan },
+              busy ? '写剧本中…' : '🎬 生成剧本'),
+            h('button', { className: 'cfl-chip', title: '导入之前导出的方案 json', onClick: importPlan }, '⇧ 导入方案'),
+            h('button', {
+              className: 'cfl-chip',
+              title: '清空当前的剧本、定妆与静帧引用，从零开始',
+              onClick: function () {
+                if (plan && !window.confirm('新建会清掉当前剧本和面板里的任务，确定？')) return;
+                setPlan(null); setLint(null); setJob(null); setOpenShot(null); setError('');
+                setCfg(function (p) { return { ...p, theme: '', style: '' }; });
+                try {
+                  window.localStorage.removeItem(PLAN_RUN_KEY);
+                  window.localStorage.setItem(FORM_KEY, JSON.stringify({ cfg: { ...CFG_DEFAULTS }, plan: null }));
+                } catch { /* ignore */ }
+              },
+            }, '＋ 新建')
+          )
         ),
 
         error ? h('div', { style: { color: '#e05c5c', fontSize: '13px', marginTop: '8px' } }, error) : null,
@@ -912,6 +999,7 @@ const STEPS = [
               })
             )
           : null
+        )
       );
     }
 
