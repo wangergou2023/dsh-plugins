@@ -217,44 +217,6 @@ const STEPS = [
           .catch(function () {});
       }, []);
 
-      React.useEffect(function () {
-        const back = takeStashedPlan();
-        if (back && back.plan) {
-          setPlan(back.plan);
-          if (back.lint) setLint(back.lint);
-        }
-        // 上次那个任务还没写完？接着轮询它。
-        try {
-          const pending = JSON.parse(window.localStorage.getItem(PLAN_RUN_KEY) || 'null');
-          if (pending && pending.taskId && Date.now() - (pending.at || 0) < 30 * 60 * 1000) {
-            pollPlanTask(pending.taskId);
-          }
-        } catch { /* ignore */ }
-      }, [pollPlanTask]);
-
-      React.useEffect(function () {
-        loadMeta(0);
-        refreshHistory();
-        const timer = setInterval(refreshHistory, 10000);
-        return function () { clearInterval(timer); };
-      }, [loadMeta, refreshHistory]);
-
-      const running = !!(job && (job.status === 'queued' || job.status === 'running'));
-
-      React.useEffect(function () {
-        if (!running || !job) return undefined;
-        const timer = setInterval(function () {
-          refreshJob(job.id).then(function (next) {
-            if (next && next.status !== 'running' && next.status !== 'queued') refreshHistory();
-          });
-        }, 2500);
-        return function () { clearInterval(timer); };
-      }, [running, job, refreshJob, refreshHistory]);
-
-      const vocab = (meta && meta.vocab) || { sizes: [], horizontals: [], elevations: [], moves: [], lights: [], dofs: [], transitions: [] };
-      const online = !!(meta && meta.comfyui && meta.comfyui.online);
-      const vram = meta && meta.comfyui && typeof meta.comfyui.vramFreeGB === 'number' ? meta.comfyui.vramFreeGB : null;
-
       /**
        * 写剧本走服务端任务：POST 立刻返回 taskId，再轮询 /plan-task。
        * 面板切走、插件重载都没关系——taskId 存在 localStorage，回来接着轮询。
@@ -292,6 +254,44 @@ const STEPS = [
         };
         tick();
       }, []);
+
+      React.useEffect(function () {
+        const back = takeStashedPlan();
+        if (back && back.plan) {
+          setPlan(back.plan);
+          if (back.lint) setLint(back.lint);
+        }
+        // 上次那个任务还没写完？接着轮询它。
+        try {
+          const pending = JSON.parse(window.localStorage.getItem(PLAN_RUN_KEY) || 'null');
+          if (pending && pending.taskId && Date.now() - (pending.at || 0) < 30 * 60 * 1000) {
+            pollPlanTask(pending.taskId);
+          }
+        } catch { /* ignore */ }
+      }, [pollPlanTask]);
+
+      React.useEffect(function () {
+        loadMeta(0);
+        refreshHistory();
+        const timer = setInterval(refreshHistory, 10000);
+        return function () { clearInterval(timer); };
+      }, [loadMeta, refreshHistory]);
+
+      const running = !!(job && (job.status === 'queued' || job.status === 'running'));
+
+      React.useEffect(function () {
+        if (!running || !job) return undefined;
+        const timer = setInterval(function () {
+          refreshJob(job.id).then(function (next) {
+            if (next && next.status !== 'running' && next.status !== 'queued') refreshHistory();
+          });
+        }, 2500);
+        return function () { clearInterval(timer); };
+      }, [running, job, refreshJob, refreshHistory]);
+
+      const vocab = (meta && meta.vocab) || { sizes: [], horizontals: [], elevations: [], moves: [], lights: [], dofs: [], transitions: [] };
+      const online = !!(meta && meta.comfyui && meta.comfyui.online);
+      const vram = meta && meta.comfyui && typeof meta.comfyui.vramFreeGB === 'number' ? meta.comfyui.vramFreeGB : null;
 
       async function makePlan() {
         setError('');
