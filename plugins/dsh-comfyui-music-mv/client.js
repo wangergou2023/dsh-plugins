@@ -549,25 +549,37 @@ const STEPS = [
             ...planCharacters().map(function (c, i) {
               const list = planCharacters();
               const hero = job && Array.isArray(job.heroes) ? job.heroes[i] : null;
-              const thumb = function (kind) {
+              const hasBeastLook = String((c && c.beast) || '').trim().length > 0;
+              const thumb = function (kind, label) {
                 if (!hero) return null;
                 const has = kind === 'human' ? hero.humanFile : kind === 'trans' ? hero.transFile : hero.file;
                 if (!has) return null;
+                if (kind === 'human' && hero.file && hero.file === hero.humanFile) return null;
                 const url = '/api/comfyui-music-mv/hero-img?id=' + encodeURIComponent(job.id)
                   + '&index=' + i + '&kind=' + kind + '&v=' + encodeURIComponent(String(has).slice(-16));
-                return h('img', {
-                  src: url,
-                  title: kind === 'human' ? '人形定妆' : kind === 'trans' ? '过渡形态' : (hero.humanFile ? '本体定妆' : '定妆图'),
-                  style: { width: '54px', height: '54px', objectFit: 'cover', borderRadius: '4px', border: '1px solid rgba(255,255,255,0.12)', cursor: 'zoom-in' },
-                  onClick: function () { showZoom(url); },
-                });
+                return h('div', { style: { display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '2px' } },
+                  h('img', {
+                    src: url,
+                    title: label,
+                    style: { width: '54px', height: '54px', objectFit: 'cover', borderRadius: '4px', border: '1px solid rgba(255,255,255,0.12)', cursor: 'zoom-in' },
+                    onClick: function () { showZoom(url); },
+                  }),
+                  h('div', { style: { fontSize: '9px', color: 'rgba(255,255,255,0.5)' } }, label)
+                );
               };
-              return h('div', { key: i, style: { display: 'flex', gap: '6px', marginBottom: '4px', alignItems: 'flex-start' } },
-                hero ? h('div', { style: { display: 'flex', gap: '3px' } }, thumb('file'), thumb('human'), thumb('trans'))
-                  : (job ? h('div', {
+              // 有本体（神兽/骨架）才展示三套；纯人类角色只有一张定妆，别给他编一个"本体"。
+              const thumbs = hero
+                ? (hasBeastLook
+                  ? [thumb('file', '本体'), thumb('human', '人形'), thumb('trans', '过渡')]
+                  : [hero.humanFile ? thumb('human', '定妆') : thumb('file', '定妆')])
+                : (job
+                  ? [h('div', {
                     title: '这个角色还没出定妆图',
                     style: { width: '54px', height: '54px', borderRadius: '4px', border: '1px dashed rgba(255,255,255,0.18)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '10px', color: 'rgba(255,255,255,0.45)', textAlign: 'center', lineHeight: '1.2' },
-                  }, '未定妆') : null),
+                  }, '未定妆')]
+                  : []);
+              return h('div', { key: i, style: { display: 'flex', gap: '6px', marginBottom: '4px', alignItems: 'flex-start' } },
+                thumbs.length ? h('div', { style: { display: 'flex', gap: '5px' } }, ...thumbs) : null,
                 h('input', {
                   value: c.name || '',
                   placeholder: '名字',
