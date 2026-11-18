@@ -185,7 +185,7 @@ const STEPS = [
      * 回来时从模块或 localStorage 捞回来。
      */
     const PLAN_RUN_KEY = 'comfyui-music-mv.planrun.v2';   // 现在存的是服务端 taskId
-    let ACTIVE_PLAN_RUN = null;
+    const JOB_KEY = 'comfyui-music-mv.job.v1';               // 面板上正在看哪个任务
 
     function stashPlan(plan, lint) {
       try {
@@ -199,12 +199,6 @@ const STEPS = [
     }
 
     function takeStashedPlan() {
-      if (ACTIVE_PLAN_RUN && ACTIVE_PLAN_RUN.result) {
-        const out = ACTIVE_PLAN_RUN.result;
-        ACTIVE_PLAN_RUN = null;
-        try { window.localStorage.removeItem(PLAN_RUN_KEY); } catch { /* ignore */ }
-        return out;
-      }
       try {
         const flag = JSON.parse(window.localStorage.getItem(PLAN_RUN_KEY) || 'null');
         if (flag && flag.done) {
@@ -216,13 +210,6 @@ const STEPS = [
       return null;
     }
 
-    function planRunning() {
-      if (!ACTIVE_PLAN_RUN) return false;
-      if (ACTIVE_PLAN_RUN.result) return false;
-      // 超过 5 分钟还没回来，基本是请求断了，别把按钮一直锁着。
-      if (Date.now() - ACTIVE_PLAN_RUN.startedAt > 5 * 60 * 1000) { ACTIVE_PLAN_RUN = null; return false; }
-      return true;
-    }
 
     const CFG_DEFAULTS = {
       theme: '',
@@ -301,9 +288,16 @@ const STEPS = [
           .then(function (d) {
             if (!d || !Array.isArray(d.jobs)) return;
             setHistory(d.jobs);
-            setJob(function (cur) { return cur || d.jobs[0] || null; });
           })
           .catch(function () {});
+      }, []);
+
+      /** 面板上正在看哪个任务，记下来；用户点「新建」就把指针清掉，之后不再自动挂接。 */
+      const pinJob = React.useCallback(function (id) {
+        try {
+          if (id) window.localStorage.setItem(JOB_KEY, String(id));
+          else window.localStorage.removeItem(JOB_KEY);
+        } catch { /* ignore */ }
       }, []);
 
       /**
@@ -368,6 +362,18 @@ const STEPS = [
       React.useEffect(function () {
         loadMeta(0);
         refreshHistory();
+        // 恢复面板上正在看的任务：优先 localStorage 指针；没有指针就不擅自挂最近那个。
+        let wantId = '';
+        try { wantId = window.localStorage.getItem(JOB_KEY) || ''; } catch { /* ignore */ }
+        api('/api/comfyui-music-mv/jobs')
+          .then(function (d) {
+            const list = (d && Array.isArray(d.jobs)) ? d.jobs : [];
+            const target = list.filter(function (j) { return j.id === wantId; })[0]
+              || list.filter(function (j) { return j.status === 'running' || j.status === 'queued'; })[0]
+              || null;
+            if (target) setJob(function (cur) { return cur || target; });
+          })
+          .catch(function () {});
         const timer = setInterval(refreshHistory, 10000);
         return function () { clearInterval(timer); };
       }, [loadMeta, refreshHistory]);
@@ -419,6 +425,7 @@ const STEPS = [
             crop: cfg.grade,
             phase,
           });
+          pinJob(data.job.id);
           setJob({ id: data.job.id, status: 'queued', plan, shots: [] });
           refreshJob(data.job.id);
         } catch (err) {
@@ -929,8 +936,10 @@ const STEPS = [
                 if (plan && !window.confirm('新建会清掉当前剧本和面板里的任务，确定？')) return;
                 setPlan(null); setLint(null); setJob(null); setOpenShot(null); setError('');
                 setCfg(function (p) { return { ...p, theme: '', style: '' }; });
+                pinJob('');
                 try {
                   window.localStorage.removeItem(PLAN_RUN_KEY);
+                  window.localStorage.removeItem(JOB_KEY);
                   window.localStorage.setItem(FORM_KEY, JSON.stringify({ cfg: { ...CFG_DEFAULTS }, plan: null }));
                 } catch { /* ignore */ }
               },
@@ -994,7 +1003,7 @@ const STEPS = [
                   h('span', { style: { opacity: 0.6 } }, new Date(item.createdAt).toLocaleString()),
                   h('span', null, item.status),
                   h('span', { style: { opacity: 0.7 } }, (item.plan && item.plan.title ? '《' + item.plan.title + '》' : '') + (item.stageLabel ? ' · ' + item.stageLabel : '')),
-                  h('button', { style: { all: 'unset', cursor: 'pointer', opacity: 0.6 }, onClick: function () { setJob(item); } }, '↗')
+                  h('button', { style: { all: 'unset', cursor: 'pointer', opacity: 0.6 }, onClick: function () { pinJob(item.id); setJob(item); } }, '↗')
                 );
               })
             )
