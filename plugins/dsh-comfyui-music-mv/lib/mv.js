@@ -885,7 +885,45 @@ export function scenePlatePrompt(plan, location) {
   ].filter(Boolean).join('。') + '。';
 }
 
-/* --------------------------- 角色 --------------------------- */
+/**
+ * 这一片里需要"道具资产卡"的物件：plan.props（名字 + 含义）。
+ * 同一件东西全片只能有一种形制——铃铛在第 7/19/21 镜变成三只就是从没有过道具卡。
+ */
+export function planProps(plan) {
+  const raw = Array.isArray(plan && plan.props) ? plan.props : [];
+  const seen = new Set();
+  const out = [];
+  for (const p of raw) {
+    const name = String((p && (p.name || p.prop)) || '').trim();
+    if (!name || seen.has(name)) continue;
+    seen.add(name);
+    out.push({ name, meaning: String((p && (p.meaning || p.use || p.note)) || '').trim() });
+  }
+  return out;
+}
+
+/**
+ * 道具定妆照：正交/纯侧视、中性灰底、孤立一件、无人物无场景。
+ * 这是 assets 那一类资产——和角色定妆、场景空镜三套标准互不通用。
+ */
+export function propPrompt(plan, prop) {
+  const name = String((prop && prop.name) || '').trim();
+  const meaning = String((prop && prop.meaning) || '').trim();
+  // 含义里往往藏着材质的线索（"女儿留下的旧物"→旧），把它当风格参考用，但不要让它变成叙事。
+  const wear = /旧|老|褪|磨|锈|裂|缺/.test(meaning) ? '明显使用痕迹，边缘磨亮，表面有细划痕' : '干净的实物质感';
+  const look = String((plan && plan.look) || '').trim().replace(/[。；;]+$/, '');
+  return [
+    `道具资产照：${name || '一件旧物'}，孤立的单件物品，同一个角度能看清全部形制`,
+    '正面与四分之三侧之间取一个角度，物体居中、占画面七成',
+    '中性浅灰背景，柔和均匀的棚灯，没有戏剧化阴影',
+    wear,
+    '画面里没有人物、没有手、没有桌面、没有场景，只有这一件东西',
+    look,
+    '产品摄影级清晰，边缘锐利，不要文字、不要水印、不要包装',
+  ].filter(Boolean).join('。') + '。';
+}
+
+
 
 /**
  * 一个角色的外形里往往同时写了人形和原形（「中华细犬…幻化人形时为20岁少年…」）。

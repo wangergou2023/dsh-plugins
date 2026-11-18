@@ -131,7 +131,7 @@ function heroesSection(job, ctx) {
     }
   }
   if (!cards.length) return '';
-  return `<h2>定妆 · 每个角色三套外形</h2><p class="meta">原形（动物 / 骨架）· 人形（人）· 过渡形态（正在变的那一瞬）。静帧按镜头形态取图。</p><div class="heroes">${cards.join('')}</div>${platesSection(job, ctx)}`;
+  return `<h2>定妆 · 每个角色三套外形</h2><p class="meta">原形（动物 / 骨架）· 人形（人）· 过渡形态（正在变的那一瞬）。静帧按镜头形态取图。</p><div class="heroes">${cards.join('')}</div>${platesSection(job, ctx)}${propsSection(job, ctx)}`;
 }
 
 /** 地点定妆：每个地点一张空镜，这一场的每一镜都拿它当空间参考。 */
@@ -146,6 +146,20 @@ function platesSection(job, ctx) {
   }
   if (!cards.length) return '';
   return `<h2>地点 · 每个地点一张空镜</h2><p class="meta">静帧生成时作为空间参考喂进参考图：同一间屋、同样的陈设位置、同样的光源方向。</p><div class="heroes">${cards.join('')}</div>`;
+}
+
+/** 道具资产：全片每件东西一张，形制锁死。 */
+function propsSection(job, ctx) {
+  const assets = Array.isArray(job && job.props) ? job.props : [];
+  const cards = [];
+  for (const p of assets) {
+    const uri = thumbUri(p.file, 420, ctx);
+    if (!uri) continue;
+    const shots = Array.isArray(p.shots) && p.shots.length ? `用于第 ${p.shots.join('、')} 镜` : '未被任何镜头引用';
+    cards.push(`<div class="fig"><img src="${uri}"><p><b>${esc(p.name || '')}</b><br><span class="n2">${esc(p.meaning || '')}</span><br><span class="n2">${esc(shots)}</span></p></div>`);
+  }
+  if (!cards.length) return '';
+  return `<h2>道具 · 每件东西一张</h2><p class="meta">孤立单件、中性灰底、无人物无场景。静帧生成时作为参考图喂进去：要的是同一件东西，不是"一件同类的"。</p><div class="heroes">${cards.join('')}</div>`;
 }
 
 /** 分镜板。 */

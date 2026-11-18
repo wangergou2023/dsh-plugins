@@ -866,6 +866,22 @@ const STEPS = [
                 })
               )
             ) : null,
+            job && Array.isArray(job.props) && job.props.length ? h('div', { style: { marginTop: '12px' } },
+              h('div', { className: 'mv-card-h', style: { marginBottom: '2px' } },
+                h('div', { className: 'mv-card-t' }, '道具资产'),
+                h('span', { className: 'mv-card-sub' }, '每件东西一张，形制全片锁死——要的是同一件，不是同类的')
+              ),
+              h('div', { className: 'mv-char-thumbs', style: { flexWrap: 'wrap', gap: '10px' } },
+                ...job.props.map(function (p, i) {
+                  const url = '/api/comfyui-music-mv/prop-img?id=' + encodeURIComponent(job.id)
+                    + '&index=' + i + '&v=' + encodeURIComponent(String(p.file || '').slice(-16));
+                  return h('div', { key: i, style: { display: 'flex', flexDirection: 'column', alignItems: 'center' } },
+                    h('img', { src: url, title: p.meaning || p.name, className: 'mv-thumb', onClick: function () { showZoom(url); } }),
+                    h('div', { className: 'mv-thumb-label' }, p.name || '')
+                  );
+                })
+              )
+            ) : null,
             h('div', { className: 'mv-subcard' },
               h('div', { className: 'mv-subcard-t' }, '画面与声音'),
               h('div', { className: 'mv-field' },

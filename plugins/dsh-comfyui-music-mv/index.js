@@ -24,7 +24,7 @@ import {
   fixSizeRuns, fixMoveRuns,
   linkWarmProp,
   assignPropSlots, forceSignShot, ensureOtsPair, dedupePerformance, dedupeLabels,
-  planLocations, scenePlatePrompt,
+  planLocations, scenePlatePrompt, planProps, propPrompt,
 } from './lib/mv.js';
 import { vocab, cameraSummary } from './lib/shotlang.js';
 import { probeFfmpeg, stitchWithTransitions, concatAudio, composeTransHero } from './lib/ffmpeg.js';
@@ -394,6 +394,36 @@ async function renderPlate(client, job, plan, location, index, params) {
   };
 }
 
+async function renderProp(client, job, plan, prop, index, params) {
+  const prompt = propPrompt(plan, prop);
+  const built = await buildT2iPrompt({
+    prompt,
+    aspectRatio: '1:1 (Square)',
+    megapixels: params.propMegapixels || 1.0,
+    steps: params.heroSteps || 8,
+    filenamePrefix: `mv_prop/${job.id}_${index + 1}`,
+  });
+  applyModelOverrides(built.prompt, params.models);
+  const promptId = await client.submit(built.prompt);
+  const result = await client.wait(promptId, 1800000);
+  const item = firstOutputImage(result, '29');
+  if (!item) throw new Error(`道具「${prop.name}」的资产图没有产出`);
+  const buffer = await fetchComfyImage(client, item);
+  const dir = path.join(DATA_DIR, job.id, 'props');
+  await fs.mkdir(dir, { recursive: true });
+  const stamp = Date.now().toString(36);
+  const file = path.join(dir, `prop_${index + 1}_${stamp}.png`);
+  await fs.writeFile(file, buffer);
+  const comfy = await client.upload(buffer, `mv_prop_${job.id}_${index + 1}_${stamp}.png`, 'image/png');
+  return {
+    name: prop.name,
+    meaning: prop.meaning,
+    shots: (plan.shots || []).filter((s) => String(s.prop || '') === prop.name).map((s) => s.index + 1),
+    file,
+    comfy,
+  };
+}
+
 async function renderFrame(client, job, plan, shot, params) {
   // 有定妆图就走"认人"链路：Qwen 参考编辑，角色长相全片锁死
   const sceneText = composeFramePrompt(plan, shot);
@@ -402,7 +432,7 @@ async function renderFrame(client, job, plan, shot, params) {
   const otsFocus = String(shot.composition || '') === 'ots' && (shot.cast || []).length >= 2
     ? { ...shot, cast: shot.cast.slice(0, 1) }
     : shot;
-  const pick = params.frameMode === 't2i' ? { refs: [], labels: [] } : refsForShot(job, otsFocus, 3);
+  const pick = params.frameMode === 't2i' ? { refs: [], labels: [] } : refsForShot(job, otsFocus, 4);
   if (pick.refs.length) {
     const graph = buildRefEditGraph(await refTemplate(), {
       refs: pick.refs,
@@ -802,6 +832,33 @@ async function execute(job, params) {
         }
       }
       await jobPatch(job.id, { plates: plates.filter(Boolean) });
+    }
+  }
+
+  /* 4c. 道具资产卡：全片用到的每件东西一张，形制全片锁死 */
+  if (params.propAssets !== false) {
+    const props = planProps(plan);
+    const canResumeProp = Array.isArray(job.props) && job.props.length && params.resume !== false;
+    if (canResumeProp && job.props.length >= props.length) {
+      // 续跑：已有资产直接用
+    } else if (props.length) {
+      await jobPatch(job.id, { stage: 'props', stageLabel: `生成道具资产（0/${props.length}）` });
+      const assets = canResumeProp ? [...job.props] : [];
+      for (let i = 0; i < props.length; i += 1) {
+        const prop = props[i];
+        const done = assets.find((p) => p && p.name === prop.name && p.comfy);
+        if (done) continue;
+        await jobPatch(job.id, { stageLabel: `生成道具资产（${i + 1}/${props.length}·${prop.name}）` });
+        try {
+          const asset = await renderProp(client, job, plan, prop, i, params);
+          assets[i] = asset;
+          await jobPatch(job.id, { props: assets.filter(Boolean) });
+        } catch (error) {
+          // 道具资产失败也不该毁任务：静帧照旧按文字生成
+          await jobPatch(job.id, { props: assets.filter(Boolean), propWarning: String(error && error.message || error) });
+        }
+      }
+      await jobPatch(job.id, { props: assets.filter(Boolean) });
     }
   }
 
@@ -1754,6 +1811,37 @@ export function apply(ctx) {
       },
     }));
 
+    /** 重出道具资产卡：全片每件东西一张，形制锁死后再出静帧。 */
+    disposers.push(webServer.register({
+      kind: 'exact',
+      path: '/api/comfyui-music-mv/props',
+      handler: async (request, response) => {
+        if (request.method !== 'POST') { sendJson(response, 405, { error: 'method_not_allowed' }); return; }
+        if (!sameOrigin(request)) { sendJson(response, 403, { error: 'forbidden: same-origin only' }); return; }
+        let body = null;
+        try { body = await readJsonBody(request); } catch { body = null; }
+        const id = String((body && body.id) || '');
+        await jobStore.refresh();
+        const job = jobStore.get(id);
+        if (!job) { sendJson(response, 404, { error: 'not_found', id }); return; }
+        const list = planProps(job.plan);
+        if (!list.length) { sendJson(response, 400, { error: 'no_props' }); return; }
+        try {
+          const client = new ComfyClient();
+          if (!(await client.alive())) throw new Error('连不上 ComfyUI');
+          const assets = [];
+          for (let i = 0; i < list.length; i += 1) {
+            const asset = await renderProp(client, job, job.plan, list[i], i, job.params || {});
+            assets.push(asset);
+            await jobStore.patch(id, { props: assets.slice() });
+          }
+          sendJson(response, 200, { ok: true, props: assets });
+        } catch (error) {
+          sendJson(response, 500, { error: 'props_failed', message: String(error && error.message || error) });
+        }
+      },
+    }));
+
     /** 重出定妆图：每个角色按「原形 / 人形」两张重生成，不动已经出好的静帧与视频。 */
     disposers.push(webServer.register({
       kind: 'exact',
@@ -2020,6 +2108,21 @@ export function apply(ctx) {
         const plate = job && Array.isArray(job.plates) ? job.plates[index] : null;
         if (!plate || !plate.file) { sendJson(response, 404, { error: 'not_found', id, index }); return; }
         await streamFile(request, response, plate.file, 'image/png');
+      },
+    }));
+
+    disposers.push(webServer.register({
+      kind: 'exact',
+      path: '/api/comfyui-music-mv/prop-img',
+      handler: async (request, response) => {
+        const url = new URL(request.url, 'http://localhost');
+        const id = String(url.searchParams.get('id') || '');
+        const index = Number(url.searchParams.get('index') || 0);
+        await jobStore.refresh();
+        const job = jobStore.get(id);
+        const asset = job && Array.isArray(job.props) ? job.props[index] : null;
+        if (!asset || !asset.file) { sendJson(response, 404, { error: 'not_found', id, index }); return; }
+        await streamFile(request, response, asset.file, 'image/png');
       },
     }));
 
