@@ -332,14 +332,18 @@ export function assignPropSlots(plan) {
       if (!body.includes(name)) {
         // 关键：别硬塞"还在手里"。手被别的东西占着时（端盆、拧锁、折抹布），
         // 这句话会让画面变成三只手——宁可把物件放在场景里。
-        const handFree = /手|指|攥|捏|握|提|拎|抱|托/.test(action) && !/两只手|双手|两只手掌|端着|捧/.test(action);
+        // 另一个更隐蔽的坑：这镜手上已经有别的东西了（拎着袋子/攥着钥匙），
+        // 再补一句"护膝还在手里"就是第三只手。所以先看手是不是空的。
+        const holdingOther = /(提|拎|拿|攥|握|抱|捧|端|夹|揣|挂|托|捏|按)(着|在|住)?[^，。；]{0,8}(袋|包|盒|杯|钥匙|手机|伞|帽|花|瓶|罐|绳|灯|刀|笔|书|纸|碗|盆|盘|箱)/.test(action)
+          || /手里(已经)?(有|拿着|拎着|攥着|握着)/.test(action);
+        const handFree = !holdingOther && /手|指|攥|捏|握|提|拎|抱|托/.test(action) && !/两只手|双手|两只手掌|端着|捧/.test(action);
         // 戴在身上的东西（镯/表/链/围巾…）不能写成"在手里"——那是又长出一只手
         const wearable = /镯|环|表|链|绳|围巾|帽|鞋|衣|裙|口罩|领/.test(name);
         // 搬不动的东西（烘干机、捐赠箱、洗衣机、柜子…）更不能"在手里"，只能"在手边"
         const bulky = /机|箱|柜|桌|椅|床|门|窗|架|台|桶|盆|炉|墙|车|梯|篮|筐|篓/.test(name);
         const suffix = wearable ? `${name}还在身上。`
           : bulky ? `${name}就在手边。`
-            : (handFree ? `${name}还在手里。` : `${name}搁在旁边没动。`);
+            : (holdingOther ? `${name}搁在旁边没动。` : (handFree ? `${name}还在手里。` : `${name}搁在旁边没动。`));
         if (action.length + suffix.length + 1 <= 88) {
           action = `${action.replace(/[。；;]$/, '')}，${suffix}`;
         }
