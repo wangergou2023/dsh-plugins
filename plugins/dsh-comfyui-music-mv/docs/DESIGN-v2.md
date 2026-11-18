@@ -114,10 +114,10 @@ performance: {
 | 2. 道具资产卡 `props[]` + 参考图上限 4 | ✅ 已做 | `renderProp` / `POST /props` / `GET /prop-img` / 导演本与面板；`9dfb592` |
 | 3. 表演三拍 + 五通道 + 机检 | ✅ 已做 | `normalizePerformance` / `PERF_CHANNELS` / `channels` 字段；`03b66b7` |
 | 4. 资产确认关 `phase: 'assets'` + 素材形态 M0/M1/M2 | ✅ 已做 | `assetState()` / `run()` 停关 / 面板「① 出歌 + 资产」「✓ 资产收下，出静帧」 |
-| 5. 失败模式库 `docs/FAILURES.md` | ⬜ 待做 | 每次踩坑追加一条 |
+| 5. 失败模式库 `docs/FAILURES.md` | ✅ 已做 | 22 条真实失败（资产/静帧/剧本/流水线/素材），带证据与现行防法 |
 | 6. 站位 `side` 四要素 + 180° 轴线锁 | ⬜ 待做 | `lib/mv.js` normalizePlan + `lib/prompts.js` 规则 |
-| 7. 提示词否定句改主体式（词根法） | ⬜ 待做 | composeFramePrompt 的"不要…"集中改写 |
-| 8. 通道多样性机检（不能整片 body+gaze） | ⬜ 待做 | lintPlan 第 32 项 |
+| 7. 提示词否定句改主体式（词根法） | 🟡 部分 | 服装护栏已改（衣领扣到第二颗）；场景/道具其余"不要…"待改 |
+| 8. 通道多样性机检（不能整片 body+gaze） | ✅ 已做 | `lintPlan` 第 32 项 `channel-variety`（纯身体镜 ≤40% 且组合 ≥3 种）+ `diversifyChannels()` 自动补通道 |
 
 ---
 

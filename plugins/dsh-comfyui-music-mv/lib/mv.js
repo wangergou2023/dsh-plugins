@@ -162,6 +162,36 @@ export function forceSignShot(plan) {
 const SIZE_LADDER = ['extreme_wide', 'wide', 'full', 'medium', 'close', 'extreme_close'];
 
 /**
+ * 通道多样化：模型写 channels 时爱全填 body（"他伸手、他攥拳"）。
+ * 每镜都合法，但整片读起来是同一个机位在演。这里按文本线索补通道——
+ * 有台词就一定有 voice，写了"看/望/盯"就一定有 gaze，写了"呼吸/咽"就有 breath。
+ * 只加不删，且不超过 4 个。
+ */
+export function diversifyChannels(plan) {
+  const shots = Array.isArray(plan && plan.shots) ? plan.shots : [];
+  let changed = 0;
+  const next = shots.map((s) => {
+    const cur = Array.isArray(s.channels) ? s.channels.slice(0, 4) : [];
+    if (!cur.length) return s;
+    // 只在"通道过少"时才补（1–2 个）；已经 3–4 个的不动，免得把导演的选择搅乱
+    if (cur.length >= 3) return s;
+    const text = `${s.action || ''}${s.performance || ''}${s.dialogue || ''}`;
+    const add = [];
+    if (String(s.dialogue || '').trim() && !cur.includes('voice')) add.push('voice');
+    if (/看|望|盯|视线|抬眼|垂眼|垂下眼|目光/.test(text) && !cur.includes('gaze')) add.push('gaze');
+    if (/呼吸|喘|咽|叹气|鼻息|吸了口气/.test(text) && !cur.includes('breath')) add.push('breath');
+    if (/眉|嘴角|嘴唇|脸|咬|笑|颤/.test(text) && !cur.includes('face')) add.push('face');
+    if (!add.length) return s;
+    const merged = cur.concat(add).slice(0, 4);
+    if (merged.length === cur.length) return s;
+    changed += 1;
+    return { ...s, channels: merged, channelsFilled: true };
+  });
+  return changed ? { ...plan, shots: next } : plan;
+}
+
+
+/**
  * 运镜不许三连。和景别三连同理，但更致命：
  * 连续三镜都是 push，观众会以为画面卡住了。
  * 运镜有"静→动→静"的呼吸，这里把第三镜往反向挪一档。
@@ -1496,8 +1526,12 @@ export function composeFramePrompt(plan, shot) {
       // 所以这里要把"不许换"写死，并且点名场景带来的那种制服。
       const sceneWord = String(shot.scene || '');
       const uniformRisk = /便利店|超市|药店|医院|餐厅|咖啡|酒吧|酒店|车站|机场|学校|工地/.test(sceneWord);
-      parts.push(`角色全程穿着（服装完整，不要赤膊、不要裸上身）：${wardrobe}`);
-      parts.push(`服装就是上面这几件，全片不变，不要换成制服、工作服、店员工装${uniformRisk ? '；这一场虽然是' + sceneWord.split(/[，。；]/)[0] + '，但角色穿的不是这地方的工装' : ''}`);
+      // 禁令失效的教训（manju-laoli-skill）：模型对否定不敏感、对词根敏感。
+      // 原来写"不要赤膊、不要裸上身"，"赤膊/裸"照样被激活；改成正面写"衣领扣到第二颗、袖口到手腕"。
+      parts.push(`角色穿着完整的当季衣物（衣领扣到第二颗、袖口到手腕、下摆收到腰里）：${wardrobe}`);
+      if (uniformRisk) {
+        parts.push(`这一场虽是${sceneWord.split(/[，。；]/)[0]}，角色穿的仍是上面这几件日常衣物，不是这一行的职业装`);
+      }
     }
   }
   // 只喂视觉基调；曲风是给 YuE2 的，塞进画面提示词只会把画面带偏
@@ -1910,6 +1944,21 @@ export function lintPlan(plan) {
   const cryShot = shots.filter((s) => /泪|哭出声|嚎啕/.test(`${s.performance || ''}${s.action || ''}`) && !s.cry);
   push('no-auto-tears', '没有默认掉眼泪', cryShot.length === 0,
     cryShot.length ? `${cryShot.length} 镜写了眼泪但没标 cry（${cryShot.slice(0, 3).map((s) => s.label || s.index + 1).join('、')}）` : '没有靠眼泪解决问题');
+
+  // 通道多样性：每镜合规但整片都是 body，读起来就是"同一个机位在演"。
+  const withCh = shots.filter((s) => Array.isArray(s.channels) && s.channels.length);
+  let varietyDetail = '模型没写 channels，跳过';
+  let varietyOk = true;
+  if (withCh.length >= 4) {
+    const bodyOnly = withCh.filter((s) => s.channels.length === 1 && s.channels[0] === 'body').length;
+    const distinctSets = new Set(withCh.map((s) => s.channels.slice().sort().join('+'))).size;
+    const needSets = Math.min(3, Math.max(2, Math.ceil(withCh.length / 2)));
+    // 不看"body 出现率"——人一动就有 body，它本来就该常驻；
+    // 看的是"有没有只有 body 的懒镜"以及"通道组合够不够散"。
+    varietyOk = bodyOnly <= Math.ceil(withCh.length * 0.4) && distinctSets >= needSets;
+    varietyDetail = `纯身体镜 ${bodyOnly}/${withCh.length}、通道组合 ${distinctSets} 种（需 ≥${needSets}）`;
+  }
+  push('channel-variety', '通道不单调（不能整片都在演身体）', varietyOk, varietyDetail);
 
   // 3. 景别不三连
   const sizes = shots.map((s) => s.size || '');
