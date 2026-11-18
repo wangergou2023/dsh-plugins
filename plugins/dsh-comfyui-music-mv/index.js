@@ -2572,6 +2572,24 @@ export function apply(ctx) {
 
     disposers.push(webServer.register({
       kind: 'exact',
+      path: '/api/comfyui-music-mv/hero-img',
+      handler: async (request, response) => {
+        const url = new URL(request.url, 'http://localhost');
+        const id = String(url.searchParams.get('id') || '');
+        const index = Number(url.searchParams.get('index') || 0);
+        const kind = String(url.searchParams.get('kind') || 'file');
+        await jobStore.refresh();
+        const job = jobStore.get(id);
+        const hero = job && Array.isArray(job.heroes) ? job.heroes[index] : null;
+        if (!hero) { sendJson(response, 404, { error: 'not_found', id, index }); return; }
+        const file = kind === 'human' ? hero.humanFile : kind === 'trans' ? hero.transFile : hero.file;
+        if (!file) { sendJson(response, 404, { error: 'no_' + kind, id, index }); return; }
+        await streamFile(request, response, file, 'image/png');
+      },
+    }));
+
+    disposers.push(webServer.register({
+      kind: 'exact',
       path: '/api/comfyui-music-mv/frame-img',
       handler: async (request, response) => {
         const url = new URL(request.url, 'http://localhost');

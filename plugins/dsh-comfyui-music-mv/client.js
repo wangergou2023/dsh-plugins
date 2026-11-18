@@ -34,7 +34,19 @@ window.__ModuleLoader__.load({
       ['21:9 (Cinematic)', '21:9'],
     ];
 
-    /** Electron/webview 里 window.open 会被拦掉（点了没反应），统一用 fetch + blob 下载。 */
+    /** 点缩略图看大图：自己搭一层遮罩，不依赖宿主有没有 lightbox。 */
+function showZoom(src) {
+  const mask = document.createElement('div');
+  mask.style.cssText = 'position:fixed;inset:0;z-index:99999;background:rgba(0,0,0,0.86);display:flex;align-items:center;justify-content:center;cursor:zoom-out';
+  const img = document.createElement('img');
+  img.src = src;
+  img.style.cssText = 'max-width:92vw;max-height:92vh;border-radius:6px;box-shadow:0 8px 40px rgba(0,0,0,0.6)';
+  mask.appendChild(img);
+  mask.addEventListener('click', function () { mask.remove(); });
+  document.body.appendChild(mask);
+}
+
+/** Electron/webview 里 window.open 会被拦掉（点了没反应），统一用 fetch + blob 下载。 */
 function downloadFile(url, fallbackName) {
   fetch(url).then(function (r) {
     if (!r.ok) return r.text().then(function (t) { throw new Error('HTTP ' + r.status + ' ' + String(t).slice(0, 120)); });
@@ -536,7 +548,26 @@ const STEPS = [
             h('div', { style: { ...muted, marginTop: '8px' } }, '角色（每个角色一张定妆图，全片复用）'),
             ...planCharacters().map(function (c, i) {
               const list = planCharacters();
+              const hero = job && Array.isArray(job.heroes) ? job.heroes[i] : null;
+              const thumb = function (kind) {
+                if (!hero) return null;
+                const has = kind === 'human' ? hero.humanFile : kind === 'trans' ? hero.transFile : hero.file;
+                if (!has) return null;
+                const url = '/api/comfyui-music-mv/hero-img?id=' + encodeURIComponent(job.id)
+                  + '&index=' + i + '&kind=' + kind + '&v=' + encodeURIComponent(String(has).slice(-16));
+                return h('img', {
+                  src: url,
+                  title: kind === 'human' ? '人形定妆' : kind === 'trans' ? '过渡形态' : (hero.humanFile ? '本体定妆' : '定妆图'),
+                  style: { width: '54px', height: '54px', objectFit: 'cover', borderRadius: '4px', border: '1px solid rgba(255,255,255,0.12)', cursor: 'zoom-in' },
+                  onClick: function () { showZoom(url); },
+                });
+              };
               return h('div', { key: i, style: { display: 'flex', gap: '6px', marginBottom: '4px', alignItems: 'flex-start' } },
+                hero ? h('div', { style: { display: 'flex', gap: '3px' } }, thumb('file'), thumb('human'), thumb('trans'))
+                  : (job ? h('div', {
+                    title: '这个角色还没出定妆图',
+                    style: { width: '54px', height: '54px', borderRadius: '4px', border: '1px dashed rgba(255,255,255,0.18)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '10px', color: 'rgba(255,255,255,0.45)', textAlign: 'center', lineHeight: '1.2' },
+                  }, '未定妆') : null),
                 h('input', {
                   value: c.name || '',
                   placeholder: '名字',
