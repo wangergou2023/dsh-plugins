@@ -1684,6 +1684,11 @@ export function composeFramePrompt(plan, shot) {
 export function composeVideoPrompt(plan, shot, opts = {}) {
   const pics = [];
   if (opts.frameImage) pics.push('以 <Picture 1> 作为本镜的开场画面，人物、服装、场景、光线都与它一致');
+  // 物件形变是视频段的高频失败（实测：一把收拢的长柄伞被举成"伞尖朝上、伞面张开"的怪形）。
+  // 不写"不要变形"（模型对否定不敏感），改成让物件的形态锚在首帧上。
+  if (opts.frameImage && shot.prop) {
+    pics.push(`${shot.prop}的形状、朝向、颜色全程和 <Picture 1> 里的一样，只改变它在画面里的位置`);
+  }
   for (const item of opts.identity || []) {
     pics.push(`<Picture ${item.picture}> 是${item.name}的身份参考，长相、发型、服装不能变`);
   }
