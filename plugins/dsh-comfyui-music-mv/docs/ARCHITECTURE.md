@@ -10,7 +10,11 @@
 
 | 文件 | 行数 | 职责 | 什么时候改它 |
 |---|---|---|---|
-| `index.js` | ~2480 | 插件入口：工具注册、HTTP 路由、后台任务（JobStore + run 流水线）、所有 LLM 提示词 | 加工具/路由、改提示词、改任务流程 |
+| `index.js` | ~1834 | 插件入口：工具注册、HTTP 路由、后台任务流水线（run 编排、出歌/定妆/静帧/视频/合成） | 加工具/路由、改任务流程 |
+| `lib/prompts.js` | ~236 | 所有 LLM 提示词：planSystemPrompt、planScriptPrompt、shotsPrompt、DENSITY_EXAMPLE、REVIEW/COMPARE/REWRITE/WARM/FOCUS_SYSTEM | 改提示词、调 few-shot |
+| `lib/repairs.js` | ~275 | 基于 LLM 的自动返修：repairBookend、relieveSilence、reviewPlan、comparePlans(Fair)、rewriteShots、addWarmBeat、focusSignShot | 改返修策略 |
+| `lib/llm.js` | ~68 | 宿主 LLM 适配：rich messages、取文本、错误转人话 | 改模型调用 |
+| `lib/jobs.js` | ~81 | JobStore：任务持久化、reapOrphans、按 id 读写 | 改任务存储 |
 | `lib/mv.js` | ~1640 | 剧本数据模型：normalizePlan、体检 lintPlan、各种自动返修、画面提示词 composeFramePrompt | 改剧本结构、加体检项、改画面提示词 |
 | `client.js` | ~960 | 面板（React 无 JSX，`h()` 手搓）：表单、剧本卡、任务卡、导演本/分镜板按钮 | 改 UI/交互 |
 | `lib/shotlang.js` | ~105 | 景别/机位/运镜/灯光的中英词表（`vocab()` 给面板下拉用） | 加镜头语言词 |
