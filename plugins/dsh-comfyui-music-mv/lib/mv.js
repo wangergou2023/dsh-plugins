@@ -466,6 +466,49 @@ export function enforceReversePair(plan) {
   return plan;
 }
 
+/**
+ * 一串过肩镜（拆镜拆出来的 2–4 个连续反打）的站位归一：
+ * enforceReversePair 只处理"一对"，连排三四个就只剩第一对有左右、其余全一样，
+ * 观众会觉得两人站着不动。这里按顺序交替：左/右/左/右，单数位的 cast 顺序也对调。
+ */
+export function fixOtsRuns(rawShots) {
+  const out = (Array.isArray(rawShots) ? rawShots : []).map((s) => ({ ...s }));
+  let i = 0;
+  while (i < out.length) {
+    const head = out[i];
+    const isOts = (s) => String(s.composition || '') === 'ots' && Array.isArray(s.cast) && s.cast.length >= 2;
+    if (!isOts(head)) { i += 1; continue; }
+    // 注意：new Set("a|b") 会把字符串拆成字符集，这里必须塞进数组
+    const names = new Set([String(head.cast[0]) + '|' + String(head.cast[1])]);
+    let j = i + 1;
+    while (j < out.length) {
+      const s = out[j];
+      if (!isOts(s)) break;
+      if (String(s.scene || '') !== String(head.scene || '')) break;
+      const key = String(s.cast[0]) + '|' + String(s.cast[1]);
+      const keyRev = String(s.cast[1]) + '|' + String(s.cast[0]);
+      if (!names.has(key) && !names.has(keyRev)) break;
+      j += 1;
+    }
+    const run = j - i;
+    if (run >= 2) {
+      const base = head.cast.slice();
+      const swapped = [base[1], ...base.slice(2), base[0]];
+      for (let k = i; k < j; k += 1) {
+        const even = (k - i) % 2 === 0;
+        out[k] = {
+          ...out[k],
+          side: even ? 'left' : 'right',
+          cast: even ? base.slice() : swapped.slice(),
+          scene: head.scene || out[k].scene,
+        };
+      }
+    }
+    i = j;
+  }
+  return out;
+}
+
 export function expandDialogueBeats(rawShots, opts = {}) {
   const minSeconds = Number(opts.minSeconds) || 7;
   const maxParts = Number(opts.maxParts) || 3;
@@ -496,7 +539,14 @@ export function expandDialogueBeats(rawShots, opts = {}) {
     for (let i = 0; i < parts; i += 1) {
       out.push({
         ...raw,
-        label: `${String((raw && raw.label) || '').trim()}${i === 0 ? '' : `·${i + 1}`}`,
+        // 标题也按台词给：拆出来的几镜动作文字一样，只用"·2/·3"分不出谁是谁（实测分镜表上 4 格同名）
+        label: i === 0
+          ? String((raw && raw.label) || '').trim()
+          : (() => {
+            const tail = String(slices[i] || '').split(/[，,；;、]/).filter(Boolean).pop() || '';
+            const short = tail.slice(0, 6);
+            return `${String((raw && raw.label) || '').trim()}·${short || i + 1}`;
+          })(),
         start: Number(raw.start) + span * i,
         end: Number(raw.start) + span * (i + 1),
         dialogue: slices[i] || '',

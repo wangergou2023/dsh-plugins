@@ -23,7 +23,7 @@ import {
   enforceReversePair,
   fixSizeRuns, fixMoveRuns, diversifyChannels,
   linkWarmProp,
-  assignPropSlots, forceSignShot, ensureOtsPair, dedupePerformance, dedupeLabels,
+  assignPropSlots, forceSignShot, ensureOtsPair, dedupePerformance, dedupeLabels, fixOtsRuns,
   planLocations, scenePlatePrompt, planProps, propPrompt, assetState,
 } from './lib/mv.js';
 import { vocab, cameraSummary } from './lib/shotlang.js';
@@ -624,7 +624,7 @@ async function execute(job, params) {
     // 对话长的镜头先拆成正反打短镜，再排时间轴（拆完镜头数会变多，所以要在 normalizePlan 之前做）
   {
     const raw = Array.isArray(params.plan && params.plan.shots) ? params.plan.shots : [];
-    const grown = expandDialogueBeats(raw);
+    const grown = dedupeLabels({ shots: fixOtsRuns(expandDialogueBeats(raw)) }).shots;
     // 拆镜之后镜头数变多了，shotCount 必须跟着涨，否则 normalizePlan 会把拆出来的短镜又截掉
     params = { ...params, plan: { ...params.plan, shots: grown }, shotCount: grown.length };
   }
@@ -766,7 +766,7 @@ async function execute(job, params) {
   const keepCount = Number(params.shotCount) || (plan.shots ? plan.shots.length : 0) || undefined;
   const wantedDuration = plan.duration;
   {
-    const grown = expandDialogueBeats(plan.shots);
+    const grown = dedupeLabels({ shots: fixOtsRuns(expandDialogueBeats(plan.shots)) }).shots;
     plan = { ...plan, shots: grown };
   }
   plan = normalizePlan(plan, { duration: songDuration, shotCount: keepCount || plan.shots.length });
