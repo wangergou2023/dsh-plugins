@@ -115,8 +115,8 @@ performance: {
 | 3. 表演三拍 + 五通道 + 机检 | ✅ 已做 | `normalizePerformance` / `PERF_CHANNELS` / `channels` 字段；`03b66b7` |
 | 4. 资产确认关 `phase: 'assets'` + 素材形态 M0/M1/M2 | ✅ 已做 | `assetState()` / `run()` 停关 / 面板「① 出歌 + 资产」「✓ 资产收下，出静帧」 |
 | 5. 失败模式库 `docs/FAILURES.md` | ✅ 已做 | 22 条真实失败（资产/静帧/剧本/流水线/素材），带证据与现行防法 |
-| 6. 站位 `side` 四要素 + 180° 轴线锁 | ⬜ 待做 | `lib/mv.js` normalizePlan + `lib/prompts.js` 规则 |
-| 7. 提示词否定句改主体式（词根法） | 🟡 部分 | 服装护栏已改（衣领扣到第二颗）；场景/道具其余"不要…"待改 |
+| 6. 站位 `side` 四要素 + 180° 轴线锁 | ✅ 已做 | normalizePlan 解析 `side`（left/right/center/cn 别名）；过肩镜写站位句；`enforceReversePair` 的 `fixSides()` 强制一左一右；`lintPlan` 第 33 项 `axis`；`6543c56` |
+| 7. 提示词否定句改主体式（词根法） | ✅ 已做 | 服装（衣领扣到第二颗）、场景空镜（"画面主体就是这个空间本身…一个人也不在"）、道具资产（"画面里只有这一件东西…拿它的那只手在画面之外"）；`6543c56` |
 | 8. 通道多样性机检（不能整片 body+gaze） | ✅ 已做 | `lintPlan` 第 32 项 `channel-variety`（纯身体镜 ≤40% 且组合 ≥3 种）+ `diversifyChannels()` 自动补通道 |
 
 ---
