@@ -38,10 +38,7 @@ window.__ModuleLoader__.load({
 const STYLE_ID = 'cfl-mv-style';
 
 function ensureStyle() {
-  if (document.getElementById(STYLE_ID)) return;
-  const style = document.createElement('style');
-  style.id = STYLE_ID;
-  style.textContent = [
+  const css = [
     '.mv { --mv-line: rgba(128,128,128,0.20); --mv-line-strong: rgba(128,128,128,0.32);',
     '  --mv-soft: rgba(128,128,128,0.06); --mv-softer: rgba(128,128,128,0.035);',
     '  --mv-dim: rgba(128,128,128,0.95); --mv-ink: currentColor;',
@@ -75,6 +72,12 @@ function ensureStyle() {
     '.mv-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(108px, 168px)); gap: 12px; align-items: end; margin-top: 14px; }',
     '.mv-actions { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin-top: 12px; }',
     '.mv-actions .cfl-chip { font-size: 12.5px; padding: 5px 12px; border-radius: 8px; }',
+    '.mv-subcard { margin-top: 16px; padding: 12px 14px; border: 1px solid var(--mv-line); border-radius: 10px;',
+    '  background: var(--mv-soft); display: grid; gap: 10px; }',
+    '.mv-subcard-t { font-size: 12px; font-weight: 600; letter-spacing: .3px; color: var(--mv-dim); }',
+    '.mv-check { display: inline-flex; align-items: center; gap: 5px; font-size: 12px; color: var(--mv-dim);',
+    '  padding: 4px 8px; border: 1px solid var(--mv-line); border-radius: 8px; cursor: pointer; }',
+    '.mv-check input { margin: 0; }',
     '.mv-input, .mv-select, .mv-ta { width: 100%; font-size: 13px; padding: 6px 9px; border-radius: 8px;',
     '  border: 1px solid var(--mv-line-strong); background: transparent; color: inherit; font-family: inherit; }',
     '.mv-ta { resize: vertical; min-height: 58px; line-height: 1.55; }',
@@ -108,8 +111,13 @@ function ensureStyle() {
     '.mv-meta-row.lyric .mv-meta-v { font-style: italic; color: var(--mv-dim); }',
     /* characters */
     '.mv-chars { display: grid; gap: 10px; margin-top: 6px; }',
-    '.mv-char { display: grid; grid-template-columns: auto 128px 1fr auto; gap: 10px; align-items: start;',
+    /* 用 flex 而不是 grid：没有定妆图时第一个子元素会缺一个，grid 会把名字挤进 auto 列、
+       外观挤进 128px 列，看起来像文本框错位（就是这么错的）。 */
+    '.mv-char { display: flex; gap: 10px; align-items: flex-start; flex-wrap: nowrap;',
     '  border: 1px solid var(--mv-line); border-radius: 10px; padding: 10px 12px; background: var(--mv-soft); }',
+    '.mv-char > .mv-input { flex: 0 0 110px; }',
+    '.mv-char > .mv-ta { flex: 1 1 auto; min-width: 0; min-height: 54px; }',
+    '.mv-char > .cfl-chip { flex: 0 0 auto; }',
     '.mv-char-thumbs { display: flex; gap: 5px; }',
     '.mv-thumb { width: 56px; height: 56px; border-radius: 8px; object-fit: cover; cursor: zoom-in;',
     '  border: 1px solid var(--mv-line-strong); }',
@@ -117,8 +125,16 @@ function ensureStyle() {
     '  display: flex; align-items: center; justify-content: center; font-size: 10px; color: var(--mv-dim); opacity: .6; }',
     '.mv-thumb-label { font-size: 9.5px; text-align: center; color: var(--mv-dim); opacity: .7; margin-top: 2px; }',
     '.mv-char-body { display: flex; flex-direction: column; gap: 6px; }',
-    '@media (max-width: 720px) { .mv-char { grid-template-columns: 1fr; } .mv-wrap { padding: 12px; } }',
+    '@media (max-width: 720px) { .mv-char { flex-wrap: wrap; } .mv-char > .mv-ta { flex-basis: 100%; } .mv-wrap { padding: 12px; } }',
   ].join('\n');
+  const old = document.getElementById(STYLE_ID);
+  if (old) {
+    if (old.textContent !== css) old.textContent = css;
+    return;
+  }
+  const style = document.createElement('style');
+  style.id = STYLE_ID;
+  style.textContent = css;
   document.head.appendChild(style);
 }
 
@@ -788,14 +804,14 @@ const STEPS = [
                   }, '未定妆')]
                   : []);
               return h('div', { key: i, className: 'mv-char' },
-                thumbs.length ? h('div', { className: 'mv-char-thumbs' }, ...thumbs) : null,
+                h('div', { className: 'mv-char-thumbs' }, ...thumbs),
                 h('input', {
                   value: c.name || '',
                   placeholder: '名字',
                   onChange: function (e) {
                     const next = list.slice(); next[i] = { ...next[i], name: e.target.value }; setCharacters(next);
                   },
-                  className: 'mv-input', style: { width: '128px' },
+                  className: 'mv-input',
                 }),
                 h('textarea', {
                   value: c.look || '',
@@ -834,25 +850,32 @@ const STEPS = [
                 } catch (e) { setError(String(e && e.message || e)); } finally { setBusy(''); }
               },
             }, '♻ 重出定妆') : null,
-            h('div', { style: { ...muted, marginTop: '6px' } }, '视觉基调（只喂画面：胶片感、调色、镜头、光线）'),
-            h('textarea', {
-              value: plan.look || '', rows: 2,
-              placeholder: '例如：35mm 胶片颗粒，低饱和青橙调色，浅景深，逆光边缘光',
-              onChange: function (e) { patchPlan({ look: e.target.value }); },
-              style: { width: '100%', resize: 'vertical', fontFamily: 'inherit', fontSize: '12px', marginBottom: '4px' },
-            }),
-            h('div', { style: { ...muted, marginTop: '6px' } }, '曲风（喂给 YuE2）'),
-            h('textarea', {
-              value: plan.style || '', rows: 1,
-              onChange: function (e) { patchPlan({ style: e.target.value }); },
-              style: { width: '100%', resize: 'vertical', fontFamily: 'inherit', fontSize: '12px', marginBottom: '4px' },
-            }),
-            h('textarea', {
-              value: plan.lyrics || '', rows: 8,
-              onChange: function (e) { patchPlan({ lyrics: e.target.value }); },
-              style: { width: '100%', resize: 'vertical', fontFamily: 'inherit', fontSize: '12px' },
-            }),
-            h('div', { style: { display: 'flex', gap: '8px', flexWrap: 'wrap', marginTop: '10px' } },
+            h('div', { className: 'mv-subcard' },
+              h('div', { className: 'mv-subcard-t' }, '画面与声音'),
+              h('div', { className: 'mv-field' },
+                h('div', { className: 'mv-label' }, '视觉基调（只喂画面：胶片感、调色、镜头、光线）'),
+                h('textarea', {
+                  value: plan.look || '', rows: 2, className: 'mv-ta',
+                  placeholder: '例如：35mm 胶片颗粒，低饱和青橙调色，浅景深，逆光边缘光',
+                  onChange: function (e) { patchPlan({ look: e.target.value }); },
+                })
+              ),
+              h('div', { className: 'mv-field' },
+                h('div', { className: 'mv-label' }, '曲风（喂给 YuE2）'),
+                h('textarea', {
+                  value: plan.style || '', rows: 1, className: 'mv-ta',
+                  onChange: function (e) { patchPlan({ style: e.target.value }); },
+                })
+              ),
+              h('div', { className: 'mv-field' },
+                h('div', { className: 'mv-label' }, '歌词（YuE2 按段落标记唱）'),
+                h('textarea', {
+                  value: plan.lyrics || '', rows: 8, className: 'mv-ta',
+                  onChange: function (e) { patchPlan({ lyrics: e.target.value }); },
+                })
+              )
+            ),
+            h('div', { className: 'mv-actions' },
               h('button', { className: 'cfl-chip', style: { fontWeight: 600 }, disabled: !!busy || running, onClick: function () { startRun('frames'); } }, '① 出歌 + 定妆 + 静帧'),
               job && job.status === 'paused' ? h('button', { className: 'cfl-chip', style: { fontWeight: 600 }, disabled: !!busy, onClick: function () { continueRun('videos'); } }, '② 出视频 + 合成') : null,
               job && job.status === 'interrupted' ? h('button', { className: 'cfl-chip', style: { fontWeight: 600 }, disabled: !!busy, onClick: function () { continueRun(job.shots && job.shots.some(function (s) { return s.frame; }) ? 'videos' : 'frames'); } }, '↻ 续跑（进程重启过）') : null,
@@ -867,15 +890,15 @@ const STEPS = [
                 onClick: function () { downloadFile('/api/comfyui-music-mv/board?download=1&id=' + encodeURIComponent(job.id), '分镜板.png'); },
               }, '🖼 分镜板') : null,
               h('button', { className: 'cfl-chip', title: '导入之前导出的方案', onClick: importPlan }, '⇧ 导入'),
-              h('label', { style: { display: 'flex', alignItems: 'center', gap: '5px', ...small } },
+              h('label', { className: 'mv-check' },
                 h('input', { type: 'checkbox', checked: cfg.tailLink, onChange: function (e) { setCfg(function (p) { return { ...p, tailLink: e.target.checked }; }); } }),
                 '末帧接龙'
               ),
-              h('label', { title: '有歌词的镜头会把歌切一段喂给模型，让它按这段歌声对口型', style: { display: 'flex', alignItems: 'center', gap: '5px', ...small } },
+              h('label', { className: 'mv-check', title: '有歌词的镜头会把歌切一段喂给模型，让它按这段歌声对口型' },
                 h('input', { type: 'checkbox', checked: cfg.lipSync, onChange: function (e) { setCfg(function (p) { return { ...p, lipSync: e.target.checked }; }); } }),
                 '对口型'
               ),
-              h('label', { title: '合成后再过一遍：2.35:1 遮幅 + 调色 + 暗角 + 胶片颗粒 + 片名（需要 ffmpeg）', style: { display: 'flex', alignItems: 'center', gap: '5px', ...small } },
+              h('label', { className: 'mv-check', title: '合成后再过一遍：2.35:1 遮幅 + 调色 + 暗角 + 胶片颗粒 + 片名（需要 ffmpeg）' },
                 h('input', { type: 'checkbox', checked: cfg.grade, onChange: function (e) { setCfg(function (p) { return { ...p, grade: e.target.checked }; }); } }),
                 '电影质感'
               )
