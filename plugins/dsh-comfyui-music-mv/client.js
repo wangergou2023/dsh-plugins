@@ -850,6 +850,22 @@ const STEPS = [
                 } catch (e) { setError(String(e && e.message || e)); } finally { setBusy(''); }
               },
             }, '♻ 重出定妆') : null,
+            job && Array.isArray(job.plates) && job.plates.length ? h('div', { style: { marginTop: '12px' } },
+              h('div', { className: 'mv-card-h', style: { marginBottom: '2px' } },
+                h('div', { className: 'mv-card-t' }, '地点定妆'),
+                h('span', { className: 'mv-card-sub' }, '每个地点一张空镜，这一场的每一镜都拿它当空间参考')
+              ),
+              h('div', { className: 'mv-char-thumbs', style: { flexWrap: 'wrap', gap: '10px' } },
+                ...job.plates.map(function (p, i) {
+                  const url = '/api/comfyui-music-mv/scene-img?id=' + encodeURIComponent(job.id)
+                    + '&index=' + i + '&v=' + encodeURIComponent(String(p.file || '').slice(-16));
+                  return h('div', { key: i, style: { display: 'flex', flexDirection: 'column', alignItems: 'center' } },
+                    h('img', { src: url, title: p.heading || p.key, className: 'mv-thumb', onClick: function () { showZoom(url); } }),
+                    h('div', { className: 'mv-thumb-label' }, p.key || '')
+                  );
+                })
+              )
+            ) : null,
             h('div', { className: 'mv-subcard' },
               h('div', { className: 'mv-subcard-t' }, '画面与声音'),
               h('div', { className: 'mv-field' },
