@@ -428,7 +428,8 @@ async function renderProp(client, job, plan, prop, index, params) {
   return {
     name: prop.name,
     meaning: prop.meaning,
-    shots: (plan.shots || []).filter((s) => String(s.prop || '') === prop.name).map((s) => s.index + 1),
+    // 用"在数组里的位置"而不是 s.index：模型给的 index 有时是乱的（实测 6 镜的片子里出现过 8 号镜）
+    shots: (plan.shots || []).map((s, i) => (String(s.prop || '') === prop.name ? i + 1 : 0)).filter(Boolean),
     file,
     comfy,
   };

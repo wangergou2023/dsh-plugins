@@ -536,9 +536,18 @@ export function expandDialogueBeats(rawShots, opts = {}) {
       for (let i = 0; i < parts; i += 1) slices.push(i === 0 ? dialogue : '');
     }
     const span = seconds / parts;
+    // 拆出来的几段如果景别和运镜都照抄原镜，分镜表上会连成"同景别三连/同运镜三连"（实测连挂两项机检）。
+    // 这里给偶数段换一档景别、给奇数段收成固定机位：A/B/A 交替，既不会三连，也符合"说话镜动、反应镜静"。
+    const SIZE_ORDER = ['extreme_wide', 'wide', 'full', 'medium', 'close', 'extreme_close'];
+    const baseSize = String(raw.size || 'medium');
+    const baseIdx = Math.max(0, SIZE_ORDER.indexOf(baseSize));
+    const altSize = SIZE_ORDER[Math.min(SIZE_ORDER.length - 1, baseIdx + 1)] || baseSize;
+    const altMove = /static|固定/i.test(String(raw.move || '')) ? (raw.move || 'static') : 'static';
     for (let i = 0; i < parts; i += 1) {
       out.push({
         ...raw,
+        size: i % 2 === 0 ? baseSize : altSize,
+        move: i % 2 === 0 ? raw.move : altMove,
         // 标题也按台词给：拆出来的几镜动作文字一样，只用"·2/·3"分不出谁是谁（实测分镜表上 4 格同名）
         label: i === 0
           ? String((raw && raw.label) || '').trim()
@@ -557,12 +566,13 @@ export function expandDialogueBeats(rawShots, opts = {}) {
         // 拆出来的分镜必须保留原动作：以前这里给无台词的那一段写了通用文案，
         // 结果 9 镜里有 5 镜的动作全变成"这一镜只是反应"，画面直接崩掉（实测 mv_mwjxar7pcoh3）。
         action: i === 0 ? raw.action : `${raw.action}（同一动作的下一半：气还没换过来，话是低下去接的）`,
-        // 每一段的表演要落在这段动作的不同位置，否则三段的表演完全一样（分镜表上看像复制粘贴）。
+        // 每一段的表演要落在这段动作的不同位置，否则三段的表演完全一样（分镜表上看像复制粘贴，
+        // 而且体检的第 11 项 perf-dup 正是比开头 12 个字——开头一样就直接挂）。
         performance: i === 0
           ? raw.performance
           : (slices[i]
-            ? `${String(raw.performance || '')}；这一段落在动作的中途，重心已经换到另一只脚上`
-            : `${String(raw.performance || '')}；这一段只剩收尾那一拍，话没接，眼睛先动`),
+            ? `这一段停在话说到一半的地方：${String(raw.performance || '')}`
+            : `这一段只剩最后一拍：${String(raw.performance || '')}`),
       });
     }
   }
