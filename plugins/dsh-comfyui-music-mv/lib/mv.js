@@ -316,6 +316,9 @@ export function assignPropSlots(plan) {
   };
 
   keptNames.forEach((name, k) => {
+    // 这个物件在剧本里第一次自然出现的镜号。比它更早的格子不能写"在手里"——
+    // 那会变成"还没出场的东西已经拿在手上了"（实测：空药盒在第 1 镜就'搁在旁边'）。
+    const firstMention = shots.findIndex((s) => `${s.action || ''}${s.performance || ''}`.includes(name));
     // 三个窗口：开场 / 中段 / 结尾；同批物件错开一格，别撞在同一镜
     const windows = [
       [0, third],
@@ -343,7 +346,8 @@ export function assignPropSlots(plan) {
         const bulky = /机|箱|柜|桌|椅|床|门|窗|架|台|桶|盆|炉|墙|车|梯|篮|筐|篓/.test(name);
         const suffix = wearable ? `${name}还在身上。`
           : bulky ? `${name}就在手边。`
-            : (holdingOther ? `${name}搁在旁边没动。` : (handFree ? `${name}还在手里。` : `${name}搁在旁边没动。`));
+            : (firstMention >= 0 && idx < firstMention) ? `${name}在这一场里，摆在能看见的地方。`
+              : (holdingOther ? `${name}搁在旁边没动。` : (handFree ? `${name}还在手里。` : `${name}搁在旁边没动。`));
         if (action.length + suffix.length + 1 <= 88) {
           action = `${action.replace(/[。；;]$/, '')}，${suffix}`;
         }
@@ -401,11 +405,35 @@ export function enforceReversePair(plan) {
   }
   if (ots.length < 2) return plan;
 
+  // 已经是一对互换过 cast 的反打：只需要把站位补成一左一右。
+  const fixSides = () => {
+    let touched = false;
+    for (let i = 1; i < shots.length; i += 1) {
+      const A = shots[i - 1];
+      const B = shots[i];
+      if (String(A.composition || '') !== 'ots' || String(B.composition || '') !== 'ots') continue;
+      const swapped = Array.isArray(A.cast) && Array.isArray(B.cast)
+        && A.cast.length >= 2 && B.cast.length >= 2
+        && A.cast[0] === B.cast[1] && A.cast[1] === B.cast[0];
+      if (!swapped || String(A.scene || '') !== String(B.scene || '')) continue;
+      if (A.side === B.side || !A.side || !B.side) {
+        const sideA = A.side === 'right' ? 'right' : 'left';
+        shots[i - 1] = { ...A, side: sideA };
+        shots[i] = { ...B, side: sideA === 'left' ? 'right' : 'left' };
+        touched = true;
+      }
+    }
+    return touched;
+  };
+
   const pairUp = (a, b) => {
     const A = shots[a];
     const B = shots[b];
     const swapped = [B.cast[1], ...B.cast.slice(2), B.cast[0]];
-    shots[b] = { ...B, cast: swapped, scene: A.scene || B.scene };
+    // 轴线：一对反打必须一个在左、一个在右，且朝向相反。缺 side 就补，方向冲突就按对子定。
+    const sideA = A.side === 'right' ? 'right' : 'left';
+    shots[a] = { ...A, cast: A.cast, scene: A.scene || B.scene, side: sideA };
+    shots[b] = { ...B, cast: swapped, scene: A.scene || B.scene, side: sideA === 'left' ? 'right' : 'left' };
   };
 
   // 优先找"同一时刻"的一对：同 time 且 cast 顺序相同
@@ -417,6 +445,7 @@ export function enforceReversePair(plan) {
       const sameTime = String(A.time || '') === String(B.time || '');
       if (sameCastOrder && sameTime) {
         pairUp(ots[i], ots[j]);
+        fixSides();
         return { ...plan, shots };
       }
     }
@@ -428,10 +457,12 @@ export function enforceReversePair(plan) {
       const B = shots[ots[j]];
       if ((A.cast || []).join('|') === (B.cast || []).join('|')) {
         pairUp(ots[i], ots[j]);
+        fixSides();
         return { ...plan, shots };
       }
     }
   }
+  if (fixSides()) return { ...plan, shots };
   return plan;
 }
 
@@ -713,6 +744,11 @@ export function normalizePlan(data, opts = {}) {
       // （实测《放水》第 8 镜、《最后一单》第 5 镜的骷髅狗都是这么来的）。
       form: coerceForm(normalizeForm(src.form || src.形态 || src.mode), castList),
       composition: normalizeComposition(src.composition || src.shotType || src.构图),
+      // 站位：left/right/center。反打时一对镜必须一左一右（越过轴线观众就会以为两人换了位置）。
+      side: /^(left|right|center|左|右|中)$/.test(String(src.side || src.standing || src.position || '').trim())
+        ? ({ 左: 'left', 右: 'right', 中: 'center' })[String(src.side || src.standing || src.position || '').trim()]
+          || String(src.side || src.standing || src.position || '').trim().toLowerCase()
+        : '',
       dialogue: text(src.dialogue),
       cast: castList,
       prompt: action,
@@ -912,7 +948,8 @@ export function scenePlatePrompt(plan, location) {
   return [
     `地点定妆照：${heading || '室内空间'}，同一个空间的全貌，空镜`,
     bits.length ? `空间里有：${bits.slice(0, 4).join('；')}` : '',
-    '画面里完全没有人物、没有脸、没有手，只有环境和陈设',
+    // 正面陈述代替否定：模型对词根敏感，写"没有人物"反而在提示词里放了"人物"。
+    '画面主体就是这个空间本身：陈设、墙面、地面、光源方向，一个人也不在',
     '广角，正视或轻微斜视，光线稳定，材质与磨损看得清',
     look,
     '电影剧照，不要文字、不要水印',
@@ -970,9 +1007,10 @@ export function propPrompt(plan, prop) {
     '正面与四分之三侧之间取一个角度，物体居中、占画面七成',
     '中性浅灰背景，柔和均匀的棚灯，没有戏剧化阴影',
     wear,
-    '画面里没有人物、没有手、没有桌面、没有场景，只有这一件东西',
+    // 同样改成正面陈述：只说"画面里是什么"，不要说"没有什么"。
+    '画面里只有这一件东西，落在干净的台面上；拿它的那只手在画面之外',
     look,
-    '产品摄影级清晰，边缘锐利，不要文字、不要水印、不要包装',
+    '产品摄影级清晰，边缘锐利，素净无字',
   ].filter(Boolean).join('。') + '。';
 }
 
@@ -1416,6 +1454,9 @@ export function composeFramePrompt(plan, shot) {
     if (shot.scene) parts.push(shot.scene);
     if (shot.time) parts.push(shot.time);
     parts.push(`主角是${a.name}（${String(a.look || '').split(/[，。；]/).slice(0, 2).join('，')}），在焦内，脸部清楚`);
+    // 站位：反打时一左一右，观众才认得出"还是这两个人在说话"。不给站位时模型爱把人摆在正中。
+    if (shot.side === 'left') parts.push('主角站在画面左侧三分之一处，右侧留给焦外的那个肩膀');
+    else if (shot.side === 'right') parts.push('主角站在画面右侧三分之一处，左侧留给焦外的那个肩膀');
     // 前景那位不点名：名字一出现，模型会把他的衣服/外形套到主角身上（实测第 2 镜女孩穿上了店员的制服）。
     parts.push('画面边缘只有一个虚焦的肩膀与后脑剪影，不露脸、不做动作、不是第二个人');
     // 动作里只要出现对方的名字，模型就会把对方整只画出来，过肩立刻变三人镜。
@@ -1964,6 +2005,23 @@ export function lintPlan(plan) {
   }
   push('channel-variety', '通道不单调（不能整片都在演身体）', varietyOk, varietyDetail);
 
+  // 轴线：一对反打（同场、同时刻、cast 互换）必须一左一右。越轴观众会以为两人换了位置。
+  let axisBad = 0;
+  for (let i = 1; i < shots.length; i += 1) {
+    const A = shots[i - 1];
+    const B = shots[i];
+    if (String(A.composition || '') !== 'ots' || String(B.composition || '') !== 'ots') continue;
+    const swapped = Array.isArray(A.cast) && Array.isArray(B.cast)
+      && A.cast.length >= 2 && B.cast.length >= 2
+      && A.cast[0] === B.cast[1] && A.cast[1] === B.cast[0];
+    if (!swapped) continue;
+    const sameRoom = String(A.scene || '') === String(B.scene || '');
+    if (!sameRoom) continue;
+    if (A.side === B.side || !A.side || !B.side) axisBad += 1;
+  }
+  push('axis', '反打不越轴（一对镜一左一右）', axisBad === 0,
+    axisBad ? `${axisBad} 对反打站位相同或没写 side——观众会觉得两人换了位置` : '反打站位互为正反');
+
   // 3. 景别不三连
   const sizes = shots.map((s) => s.size || '');
   let sizeRun = 0; let worstSize = 0;
@@ -1973,12 +2031,13 @@ export function lintPlan(plan) {
   }
   push('size-run', '景别有节奏（不三连）', worstSize < 3, `最长连续同景别 ${worstSize} 镜`);
 
-  // 4. 运镜不三连
+  // 4. 运镜不三连（固定机位不算——连着三镜不动是克制，不是偷懒；只有连着推/拉/摇才单调）
   const moves = shots.map((s) => s.move || '');
   let moveRun = 0; let worstMove = 0;
   for (let i = 0; i < moves.length; i += 1) {
-    moveRun = i && moves[i] === moves[i - 1] ? moveRun + 1 : 1;
-    worstMove = Math.max(worstMove, moveRun);
+    const still = moves[i] === 'static' || moves[i] === '';
+    moveRun = !still && i && moves[i] === moves[i - 1] ? moveRun + 1 : 1;
+    if (!still) worstMove = Math.max(worstMove, moveRun);
   }
   push('move-run', '运镜不三连', worstMove < 3, `最长连续同运镜 ${worstMove} 镜`);
 
