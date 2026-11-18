@@ -1539,7 +1539,7 @@ export function composeFramePrompt(plan, shot) {
       .join('；');
     const beatText = cleanAction || String(shot.performance || '');
     if (beatText) parts.push(`${beastShot ? beastAction(beatText) : beatText}（只拍主角这一侧的动作）`);
-    parts.push('画面里只有两个人：一个在焦内，一个只露出局部剪影；不要第三个人、不要在画面正中并排');
+    parts.push('画面里有两个身体：一个是焦内的主体，另一个是边缘那一截肩膀与后脑的剪影，各自待在自己那一侧，中间隔着一段空');
   } else if (cast.length && mixedShot) {
     // 同框镜必须点名"两个分开的主体"。只把两套外形连在一句话里，模型会把它们揉成一个
     // 狗头人身的东西（实测第 8 格）。
@@ -1549,7 +1549,7 @@ export function composeFramePrompt(plan, shot) {
     const bHuman = String(splitLook(b.look).human || b.look || '').trim();
     if (cast.length >= 2) {
       parts.push([
-        '画面里是两个分开的主体，各占画面一侧，绝对不要融合成同一个生物：',
+        '画面里是两个彼此独立的主体，各占画面一侧，中间留出空隙（两个身体、两副轮廓）：',
         `①${a.name}，${aBeast || '非人形态（动物或骨架）'}`,
         `②${b.name}，${bHuman || b.name}`,
       ].join(''));
@@ -1557,8 +1557,8 @@ export function composeFramePrompt(plan, shot) {
       // 只有一个角色：这一格是"本体 + 人的痕迹"，不是人和兽并排，更不能长成狗头人。
       parts.push([
         `画面主体是${a.name}的本体：${aBeast || '动物或骨架'}，`,
-        '画面里不要出现手、不要出现人的脸；如果需要人的痕迹，只用投在他身上的影子、或画外一截模糊的裤脚',
-        '这一格绝对不能出现狗头人身、也不能出现半人半狗的融合生物',
+        '画面里只有这一个本体形态，完整的一只或一具；人的痕迹停在画外——地上的一道影子、或画面边缘一截模糊的裤脚',
+        '这一格的形态是统一的：头、躯干、四肢都是同一种生物的同一种材质',
       ].join(''));
     }
   } else if (cast.length) {
@@ -1597,11 +1597,11 @@ export function composeFramePrompt(plan, shot) {
   const HAND_VERB = /伸手|递|接过|接到|够|抓|拎|捏|托|扶|按住|拧|扣|拨/;
   const actionText = `${shot.action || ''} ${shot.performance || ''}`;
   if (!insertShot && shot.prop && HAND_VERB.test(actionText)) {
-    parts.push(`这只手正对着${shot.prop}，看得清它和手的距离，不要空手做手势`);
+    parts.push(`这只手正对着${shot.prop}，手指与它之间留着一道能看清的距离，手上有东西的分量`);
   }
   // 拿"擦/抹/擦瓶身"这类动作时，东西应该在台面上，不是举在胸前。
   if (/擦|抹|撸|拭/.test(actionText) && shot.prop) {
-    parts.push(`${shot.prop}放在台面上擦，不要举到胸前或举高`);
+    parts.push(`${shot.prop}压在台面上擦，手臂垂在桌面高度`);
   }
   if (insertShot) {
     parts.push('macro close-up on the object, extremely shallow depth of field, static shot, no people in frame');
