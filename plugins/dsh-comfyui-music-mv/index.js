@@ -2042,6 +2042,73 @@ export function apply(ctx) {
       },
     }));
 
+    /**
+     * 后台写剧本：POST 立刻返回 taskId，服务端把生成跑完。
+     * 面板切走/关掉都不影响——回来用 GET /plan-task?id=... 取结果。
+     */
+    const planTasks = new Map();
+    const PLAN_TASK_TTL = 30 * 60 * 1000;
+
+    function newPlanTaskId() {
+      return 'pt_' + Math.random().toString(36).slice(2, 8) + Date.now().toString(36).slice(-4);
+    }
+
+    function prunePlanTasks() {
+      const now = Date.now();
+      for (const [id, task] of planTasks) {
+        if (now - task.startedAt > PLAN_TASK_TTL) planTasks.delete(id);
+      }
+    }
+
+    disposers.push(webServer.register({
+      kind: 'exact',
+      path: '/api/comfyui-music-mv/plan-async',
+      handler: async (request, response) => {
+        if (request.method !== 'POST') { sendJson(response, 405, { error: 'method_not_allowed' }); return; }
+        if (!sameOrigin(request)) { sendJson(response, 403, { error: 'forbidden: same-origin only' }); return; }
+        let body = null;
+        try { body = await readJsonBody(request); } catch { body = null; }
+        if (!body || !String(body.theme || '').trim()) {
+          sendJson(response, 400, { error: 'theme_required', message: '先写一个主题' });
+          return;
+        }
+        prunePlanTasks();
+        const id = newPlanTaskId();
+        planTasks.set(id, { status: 'running', startedAt: Date.now(), theme: String(body.theme || '').slice(0, 60) });
+        // 故意不 await：请求立刻返回，生成长任务在服务端继续跑。
+        (async () => {
+          try {
+            const out = await generatePlan(ctx, body);
+            planTasks.set(id, { status: 'done', startedAt: planTasks.get(id).startedAt, finishedAt: Date.now(), plan: out.plan, model: out.model, lint: out.lint, theme: String(body.theme || '').slice(0, 60) });
+          } catch (error) {
+            planTasks.set(id, { status: 'failed', startedAt: planTasks.get(id).startedAt, finishedAt: Date.now(), error: friendlyError(error), theme: String(body.theme || '').slice(0, 60) });
+          }
+        })();
+        sendJson(response, 200, { taskId: id, running: planTasks.size });
+      },
+    }));
+
+    disposers.push(webServer.register({
+      kind: 'exact',
+      path: '/api/comfyui-music-mv/plan-task',
+      handler: async (request, response) => {
+        const url = new URL(request.url || '/', 'http://localhost');
+        const id = String(url.searchParams.get('id') || '');
+        const task = planTasks.get(id);
+        if (!task) { sendJson(response, 404, { error: 'not_found', id }); return; }
+        const elapsed = Date.now() - task.startedAt;
+        if (task.status === 'done') {
+          sendJson(response, 200, { status: 'done', elapsedMs: elapsed, plan: task.plan, model: task.model, lint: task.lint });
+          return;
+        }
+        if (task.status === 'failed') {
+          sendJson(response, 200, { status: 'failed', elapsedMs: elapsed, error: task.error });
+          return;
+        }
+        sendJson(response, 200, { status: 'running', elapsedMs: elapsed });
+      },
+    }));
+
     disposers.push(webServer.register({
       kind: 'exact',
       path: '/api/comfyui-music-mv/plan',

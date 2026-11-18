@@ -96,7 +96,7 @@ const STEPS = [
      * 把这次请求挂在模块作用域（不随组件卸载），完成时直接写进 localStorage，
      * 回来时从模块或 localStorage 捞回来。
      */
-    const PLAN_RUN_KEY = 'comfyui-music-mv.planrun.v1';
+    const PLAN_RUN_KEY = 'comfyui-music-mv.planrun.v2';   // 现在存的是服务端 taskId
     let ACTIVE_PLAN_RUN = null;
 
     function stashPlan(plan, lint) {
@@ -223,7 +223,14 @@ const STEPS = [
           setPlan(back.plan);
           if (back.lint) setLint(back.lint);
         }
-      }, []);
+        // 上次那个任务还没写完？接着轮询它。
+        try {
+          const pending = JSON.parse(window.localStorage.getItem(PLAN_RUN_KEY) || 'null');
+          if (pending && pending.taskId && Date.now() - (pending.at || 0) < 30 * 60 * 1000) {
+            pollPlanTask(pending.taskId);
+          }
+        } catch { /* ignore */ }
+      }, [pollPlanTask]);
 
       React.useEffect(function () {
         loadMeta(0);
@@ -248,24 +255,55 @@ const STEPS = [
       const online = !!(meta && meta.comfyui && meta.comfyui.online);
       const vram = meta && meta.comfyui && typeof meta.comfyui.vramFreeGB === 'number' ? meta.comfyui.vramFreeGB : null;
 
+      /**
+       * 写剧本走服务端任务：POST 立刻返回 taskId，再轮询 /plan-task。
+       * 面板切走、插件重载都没关系——taskId 存在 localStorage，回来接着轮询。
+       */
+      const pollPlanTask = React.useCallback(function (taskId) {
+        const started = Date.now();
+        setBusy('正在写剧本…（离开插件不会丢，回来会接着显示）');
+        const tick = async function () {
+          try {
+            const data = await api('/api/comfyui-music-mv/plan-task?id=' + encodeURIComponent(taskId));
+            if (data && data.status === 'done') {
+              stashPlan(data.plan || null, data.lint || null);
+              try { window.localStorage.removeItem(PLAN_RUN_KEY); } catch { /* ignore */ }
+              setPlan(data.plan);
+              setLint(data.lint || null);
+              setBusy('');
+              return;
+            }
+            if (data && data.status === 'failed') {
+              try { window.localStorage.removeItem(PLAN_RUN_KEY); } catch { /* ignore */ }
+              setError(String(data.error || '写剧本失败'));
+              setBusy('');
+              return;
+            }
+          } catch (err) {
+            // 服务端重启会 404：超过 3 分钟就当失败，别无限转。
+            if (Date.now() - started > 3 * 60 * 1000) {
+              try { window.localStorage.removeItem(PLAN_RUN_KEY); } catch { /* ignore */ }
+              setError(String((err && err.message) || err));
+              setBusy('');
+              return;
+            }
+          }
+          setTimeout(tick, 1500);
+        };
+        tick();
+      }, []);
+
       async function makePlan() {
         setError('');
         if (!String(cfg.theme || '').trim()) { setError('先写一个主题'); return; }
-        if (planRunning()) { setBusy('上一条还在写，等它回来…'); return; }
-        setBusy('正在写剧本…（离开插件也不会丢，回来会接着显示）');
-        ACTIVE_PLAN_RUN = { startedAt: Date.now(), result: null };
-        try { window.localStorage.setItem(PLAN_RUN_KEY, JSON.stringify({ done: false, at: Date.now() })); } catch { /* ignore */ }
         try {
-          const data = await post('/api/comfyui-music-mv/plan', { theme: cfg.theme, duration: cfg.duration, style: cfg.style });
-          const stashed = stashPlan(data.plan || null, data.lint || null);
-          if (ACTIVE_PLAN_RUN) ACTIVE_PLAN_RUN.result = stashed;
-          setPlan(data.plan);
-          setLint(data.lint || null);
+          const started = await post('/api/comfyui-music-mv/plan-async', { theme: cfg.theme, duration: cfg.duration, style: cfg.style });
+          if (!started || !started.taskId) throw new Error('没有拿到任务号');
+          try { window.localStorage.setItem(PLAN_RUN_KEY, JSON.stringify({ taskId: started.taskId, at: Date.now() })); } catch { /* ignore */ }
+          pollPlanTask(started.taskId);
         } catch (err) {
-          if (ACTIVE_PLAN_RUN) ACTIVE_PLAN_RUN = null;
-          try { window.localStorage.removeItem(PLAN_RUN_KEY); } catch { /* ignore */ }
           setError(String((err && err.message) || err));
-        } finally { setBusy(''); }
+        }
       }
 
       async function startRun(phase) {
