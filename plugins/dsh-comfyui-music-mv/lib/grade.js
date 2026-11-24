@@ -104,18 +104,18 @@ export async function cinematicPass({ pluginDir, input, output, title, subtitle,
   if (crop) filters.push('crop=iw:min(ih\\,iw/2.35):0:(ih-min(ih\\,iw/2.35))/2');
 
   const luma = grade ? await probeLuma(bin, input) : null;
-  const night = luma != null && luma < 52;
+  const night = luma != null && luma < 62;
   if (grade) {
     if (night) {
       // 夜景：抬中间调、推伽马、暗角收一半，换掉会压死暗部的 medium_contrast
-      filters.push('eq=contrast=1.05:brightness=0.03:saturation=1.06:gamma=1.07');
+      filters.push('eq=contrast=1.04:brightness=0.025:saturation=1.05:gamma=1.09');
       filters.push('curves=preset=linear');
     } else {
-      filters.push('eq=contrast=1.07:brightness=-0.015:saturation=1.08:gamma=0.98');
+      filters.push('eq=contrast=1.06:brightness=0.012:saturation=1.07:gamma=1.02');
       filters.push('curves=preset=medium_contrast');
     }
   }
-  filters.push(night ? 'vignette=angle=PI/8' : 'vignette=angle=PI/5'); // 夜片暗角收一半
+  filters.push(night ? 'vignette=angle=PI/8' : 'vignette=angle=PI/6'); // 夜片暗角收一半
   filters.push('unsharp=5:5:0.55:5:5:0.0');      // 轻微锐化，压住转码的糊
   if (grain) filters.push('noise=alls=5:allf=t'); // 胶片颗粒，弱一点
 
