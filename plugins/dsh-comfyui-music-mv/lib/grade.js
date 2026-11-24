@@ -60,6 +60,27 @@ function run(bin, args, timeoutMs = 900000) {  return new Promise((resolve, reje
 }
 
 /**
+ * 量一下源片平均亮度（YAVG，0–255）。
+ * 夜景片被"medium_contrast + 暗角 + brightness -0.015"压过之后，
+ * 暗部会整段糊成黑块（实测《玻璃雨》30s/40s 两段几乎看不出内容）。
+ */
+async function probeLuma(bin, input) {
+  try {
+    // 必须跳过片头淡入（前 0.7 秒是黑场），否则任何片子都会被判成夜景
+    const log = await run(bin, [
+      '-hide_banner', '-ss', '3', '-i', input,
+      '-vf', 'signalstats,metadata=print:file=-',
+      '-frames:v', '6', '-f', 'null', '-',
+    ], 60000);
+    const vals = [...log.matchAll(/lavfi\.signalstats\.YAVG=([\d.]+)/g)].map((m) => Number(m[1]));
+    if (!vals.length) return null;
+    return vals.reduce((a, b) => a + b, 0) / vals.length;
+  } catch {
+    return null;
+  }
+}
+
+/**
  * @param input     成片 mp4
  * @param output    输出 mp4
  * @param title     片名（可选，压在前 3 秒）
@@ -82,11 +103,19 @@ export async function cinematicPass({ pluginDir, input, output, title, subtitle,
   // 2.35:1 遮幅：裁掉上下，不做加黑边（播放器自己会加）
   if (crop) filters.push('crop=iw:min(ih\\,iw/2.35):0:(ih-min(ih\\,iw/2.35))/2');
 
+  const luma = grade ? await probeLuma(bin, input) : null;
+  const night = luma != null && luma < 52;
   if (grade) {
-    filters.push('eq=contrast=1.07:brightness=-0.015:saturation=1.08:gamma=0.98');
-    filters.push('curves=preset=medium_contrast');
+    if (night) {
+      // 夜景：抬中间调、推伽马、暗角收一半，换掉会压死暗部的 medium_contrast
+      filters.push('eq=contrast=1.05:brightness=0.03:saturation=1.06:gamma=1.07');
+      filters.push('curves=preset=linear');
+    } else {
+      filters.push('eq=contrast=1.07:brightness=-0.015:saturation=1.08:gamma=0.98');
+      filters.push('curves=preset=medium_contrast');
+    }
   }
-  filters.push('vignette=angle=PI/5');           // 轻暗角，聚拢视线
+  filters.push(night ? 'vignette=angle=PI/8' : 'vignette=angle=PI/5'); // 夜片暗角收一半
   filters.push('unsharp=5:5:0.55:5:5:0.0');      // 轻微锐化，压住转码的糊
   if (grain) filters.push('noise=alls=5:allf=t'); // 胶片颗粒，弱一点
 

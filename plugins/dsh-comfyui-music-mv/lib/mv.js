@@ -509,6 +509,33 @@ export function fixOtsRuns(rawShots) {
   return out;
 }
 
+/**
+ * 把一句动作切成 N 段，给拆出来的第 i 段分到"不同的那一节"。
+ *
+ * 先按句号/分号切；不够 N 段再按逗号顿号切更细；还是不够就让后几段"停住"，
+ * 总之不能让 4 个镜头共用同一句动作（实测《玻璃雨》2–5 镜动作字面完全一样）。
+ */
+function splitActionFor(action, i, parts) {
+  const text = String(action || '').trim();
+  if (!text || parts <= 1) return text;
+  if (i === 0 && parts === 1) return text;
+  const bySentence = text.split(/[；;。]/).map((s) => s.trim()).filter(Boolean);
+  let beats = bySentence;
+  if (beats.length < parts) {
+    beats = text.split(/[；;。，,、]/).map((s) => s.trim()).filter(Boolean);
+  }
+  if (!beats.length) return text;
+  if (beats.length >= parts) {
+    const per = Math.ceil(beats.length / parts);
+    const piece = beats.slice(i * per, (i + 1) * per);
+    if (piece.length) return piece.join('；');
+  }
+  const last = beats[beats.length - 1];
+  if (i < beats.length) return beats[i];
+  // 句子不够时：后几段停在同一拍的尾端，也仍然写得跟别段不一样
+  return `${last}，这一下停住，没再继续`;
+}
+
 export function expandDialogueBeats(rawShots, opts = {}) {
   const minSeconds = Number(opts.minSeconds) || 7;
   const maxParts = Number(opts.maxParts) || 3;
@@ -563,9 +590,10 @@ export function expandDialogueBeats(rawShots, opts = {}) {
         cast: i % 2 === 0 ? cast : [cast[1], ...cast.slice(2), cast[0]],
         composition: String(raw.size || '').match(/wide|full|extreme_wide/) ? 'two' : 'ots',
         // 拆出来的每一镜必须是"不同的一刻"，否则 1 镜和 3 镜会拍成同一张照片（实测过）。
-        // 拆出来的分镜必须保留原动作：以前这里给无台词的那一段写了通用文案，
-        // 结果 9 镜里有 5 镜的动作全变成"这一镜只是反应"，画面直接崩掉（实测 mv_mwjxar7pcoh3）。
-        action: i === 0 ? raw.action : `${raw.action}（同一动作的下一半：气还没换过来，话是低下去接的）`,
+        // 动作也要切：以前这里给 i>0 的段落续写"同一动作的下一半"，结果 2–5 镜的动作字面完全一样，
+        // 分镜表和成片里都是"同一件事重复四遍"（实测《玻璃雨》）。现在把原动作按句/顿号切成节拍，
+        // 每段分到不同的那一节。
+        action: splitActionFor(raw.action, i, parts),
         // 每一段的表演要落在这段动作的不同位置，否则三段的表演完全一样（分镜表上看像复制粘贴，
         // 而且体检的第 11 项 perf-dup 正是比开头 12 个字——开头一样就直接挂）。
         performance: i === 0
@@ -1489,6 +1517,10 @@ export function composeFramePrompt(plan, shot) {
   // 风格锚句：全片逐字复用同一句，资产与每一格都带它（否则 21 格的调色/颗粒会各自漂）。
   const anchor = String((plan && plan.styleAnchor) || (plan && plan.look) || '').trim().replace(/[。；;]+$/, '');
   if (anchor) parts.push(anchor);
+  // 夜景可读性：夜戏最容易整格压成黑块（实测《玻璃雨》第 3/5 格几乎看不出人）。
+  // 用正面陈述给主体一束能读的光，而不是写"不要太暗"。
+  const nightScene = /夜|深夜|凌晨|雨夜|天黑/.test(`${shot.time || ''} ${shot.scene || ''}`);
+  if (nightScene) parts.push('夜景的可用光落在主体上：脸、手和道具的轮廓在暗部里仍能看清，背景暗下去、主体留一层可读的亮');
   // 原形 / 人形决定喂哪套外形：不然"狗叼骨头"会被画成"男人抱女人"
   const probe = `${shot.form || ''} ${shot.action || ''} ${shot.label || ''}`;
   // 剧本里写死的 form 就是导演决定，不要再从文字里猜。
@@ -1699,8 +1731,11 @@ export function composeVideoPrompt(plan, shot, opts = {}) {
   const head = pics.length ? pics.join('；') + '。' : '';
   const move = (MOVES.find((m) => m.key === shot.move) || MOVES[0]).en;
   const light = (LIGHTS.find((l) => l.key === shot.light) || LIGHTS[0]).en;
+  // 夜戏可读性（与静帧同一句）：视频段也会把主体压进黑块，这里再给一次光。
+  const nightScene = /夜|深夜|凌晨|雨夜|天黑/.test(`${shot.time || ''} ${shot.scene || ''}`);
   const body = [
     shot.action ? `${shot.action.replace(/[。.]\s*$/, '')}。` : '',
+    nightScene ? '夜景里主体有可读的光：脸、手和道具的轮廓在暗部里仍能看清。' : '',
     `镜头：${move}。`,
     `光线：${light}。`,
     '人物表演自然连贯，画面稳定，不要文字、不要水印、不要字幕。',
