@@ -378,7 +378,7 @@ window.__ModuleLoader__.load({
       const active = job && (job.status === 'queued' || job.status === 'running');
       const done = job && job.status === 'done' && job.mediaUrl;
 
-      return h('div', { style: { padding: '18px 20px', maxWidth: '1080px' } },
+      return h('div', { style: { height: '100%', overflowY: 'auto', overflowX: 'hidden', boxSizing: 'border-box', overscrollBehavior: 'contain', padding: '18px 20px', maxWidth: '1080px' } },
         (meta && meta.models && meta.models.length
           ? h('div', { style: { display: 'flex', flexWrap: 'wrap', gap: '10px', alignItems: 'center', marginTop: '2px', marginBottom: '10px', fontSize: '12px' } },
               h('span', { style: { opacity: 0.6 } }, '模型：'),
