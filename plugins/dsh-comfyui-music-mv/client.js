@@ -277,6 +277,7 @@ const STEPS = [
       return h('div', {
         style: {
           height: '100%',
+          minHeight: 520,
           display: 'flex',
           flexDirection: 'column',
           overflow: 'hidden',
