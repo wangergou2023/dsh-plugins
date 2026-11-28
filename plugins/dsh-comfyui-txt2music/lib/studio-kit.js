@@ -417,7 +417,7 @@ function renderSlots() {
         const items = await loadOutputs(slot);
         items.forEach((it) => {
           const o = document.createElement('option');
-          o.value = it.name + '\n' + it.subfolder;
+          o.value = it.name + '\\n' + it.subfolder;
           o.textContent = it.label;
           sel.appendChild(o);
         });
@@ -426,7 +426,7 @@ function renderSlots() {
       sel.onchange = () => {
         const raw = sel.value;
         if (!raw) return;
-        const parts = raw.split('\n');
+        const parts = raw.split('\\n');
         pickOutput(slot, { name: parts[0], subfolder: parts[1] || '' });
       };
       acts.appendChild(sel);

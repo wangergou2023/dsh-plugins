@@ -1,5 +1,5 @@
 // web 工作台（spec 驱动，壳在 ./studio-kit.js）
-import { renderWorkbench } from './studio-kit.js';
+import { renderWorkbench } from './studio-kit-2.js';
 
 const SPEC = {
   "title": "首尾帧视频",
