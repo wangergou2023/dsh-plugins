@@ -356,7 +356,7 @@
   },
   "145": {
     "inputs": {
-      "lora_name": "minimax_h3_ref2v_turbo_4step_v0.1_comfyui_bf16.safetensors",
+      "lora_name": "minimax_h3_dmad_full_dareties_v4_step600_comfy_fro.safetensors",
       "strength_model": 1,
       "model": [
         "127",

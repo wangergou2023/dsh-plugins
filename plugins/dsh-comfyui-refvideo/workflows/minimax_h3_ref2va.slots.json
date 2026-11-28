@@ -23,7 +23,7 @@
         "minimax_h3_ref2v_turbo_8step_v1.0_768p_comfyui_bf16.safetensors",
         "minimax_h3_dmad_full_dareties_v4_step600_comfy_fro.safetensors"
       ],
-      "default": "minimax_h3_ref2v_turbo_4step_v0.1_comfyui_bf16.safetensors"
+      "default": "minimax_h3_dmad_full_dareties_v4_step600_comfy_fro.safetensors"
     },
     "refImageSize": { "node": "136", "input": "ref_image_size", "kind": "enum", "options": ["match", "max"], "default": "match" }
   },
