@@ -330,22 +330,33 @@ async function uploadFiles(slot, files) {
 
 async function pickOutput(slot, target) {
   if (!target) return;
+  let name = target, subfolder = '';
+  if (typeof target === 'object') { name = target.name; subfolder = target.subfolder || ''; }
   try {
-    const data = await MVK.api(BOOT.api + '/import', { method: 'POST', body: { name: target } });
-    const name = (data.name) || (data.files && data.files[0] && data.files[0].name);
-    if (!name) throw new Error('导入没有返回文件名');
-    if (slot.single || slot.max === 1) state.slots[slot.key] = [name];
-    else state.slots[slot.key].push(name);
+    const data = await MVK.api(BOOT.api + '/import', { method: 'POST', body: { name: name, subfolder: subfolder } });
+    const got = (data.name) || (data.files && data.files[0] && data.files[0].name) || name;
+    if (slot.single || slot.max === 1) state.slots[slot.key] = [got];
+    else if (state.slots[slot.key].length < slot.max) state.slots[slot.key].push(got);
     renderSlots();
   } catch (e) { MVK.toast(String(e.message || e), 'bad'); }
 }
 
 async function loadOutputs(slot) {
+  const want = String(slot.accept || 'image/').split('/')[0];
   try {
     const data = await MVK.api(BOOT.api + '/outputs');
     const items = data.files || data.items || data.outputs || [];
-    const names = items.map((x) => (typeof x === 'string' ? x : (x.key || (x.subfolder ? x.subfolder + '/' : '') + x.name))).filter(Boolean);
-    return names.slice(0, 120);
+    const out = [];
+    for (const it of items) {
+      if (typeof it === 'string') { out.push({ name: it, subfolder: '', label: it }); continue; }
+      const kind = String(it.kind || '');
+      if (want === 'image' && kind && !/image|images/i.test(kind)) continue;
+      if (want === 'video' && kind && !/video/i.test(kind)) continue;
+      if (want === 'audio' && kind && !/audio/i.test(kind)) continue;
+      const label = (it.subfolder ? it.subfolder + '/' : '') + it.name;
+      out.push({ name: it.name, subfolder: it.subfolder || '', label: label });
+    }
+    return out.slice(0, 150);
   } catch (e) { return []; }
 }
 
@@ -399,19 +410,25 @@ function renderSlots() {
     if (slot.output && (slot.single || list.length < slot.max)) {
       const sel = document.createElement('select');
       sel.className = 'btn tiny';
-      sel.style.maxWidth = '210px';
+      sel.style.maxWidth = '220px';
       sel.innerHTML = '<option value="">从 output 选…</option>';
       sel.onclick = async () => {
         if (sel.getAttribute('data-loaded')) return;
-        const names = await loadOutputs(slot);
-        names.forEach((n) => {
+        const items = await loadOutputs(slot);
+        items.forEach((it) => {
           const o = document.createElement('option');
-          o.value = n; o.textContent = n;
+          o.value = it.name + '\n' + it.subfolder;
+          o.textContent = it.label;
           sel.appendChild(o);
         });
         sel.setAttribute('data-loaded', '1');
       };
-      sel.onchange = () => pickOutput(slot, sel.value);
+      sel.onchange = () => {
+        const raw = sel.value;
+        if (!raw) return;
+        const parts = raw.split('\n');
+        pickOutput(slot, { name: parts[0], subfolder: parts[1] || '' });
+      };
       acts.appendChild(sel);
     }
     card.appendChild(acts);
