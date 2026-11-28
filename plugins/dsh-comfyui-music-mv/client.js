@@ -258,7 +258,79 @@ const STEPS = [
       );
     }
 
+    /**
+     * 面板 = 工作台。
+     * 真正的界面是 /api/comfyui-music-mv/studio 那张网页（lib/studio.js 生成），
+     * 这里只负责把它铺满面板：同一个源，页面里的 POST 能过 sameOrigin 校验。
+     */
+    const STUDIO_URL = '/api/comfyui-music-mv/studio';
+    const STUDIO_TITLE = '音乐 MV · 工作台';
+
     function MvPanel() {
+      const [full, setFull] = React.useState(false);
+      const [nonce, setNonce] = React.useState(0);
+
+      const openExternal = React.useCallback(function () {
+        try { window.open(STUDIO_URL + (nonce ? '?r=' + nonce : ''), '_blank', 'noopener'); } catch { /* 忽略 */ }
+      }, [nonce]);
+
+      return h('div', {
+        style: {
+          height: '100%',
+          display: 'flex',
+          flexDirection: 'column',
+          overflow: 'hidden',
+          background: '#f6f7f9',
+        },
+      },
+        h('div', {
+          style: {
+            height: 30,
+            flex: '0 0 30px',
+            display: 'flex',
+            alignItems: 'center',
+            gap: 10,
+            padding: '0 10px',
+            fontSize: 11.5,
+            color: 'rgba(0,0,0,.45)',
+            borderBottom: '1px solid rgba(0,0,0,.06)',
+            background: '#fff',
+          },
+        },
+          h('span', null, STUDIO_TITLE),
+          h('button', {
+            onClick: function () { setFull(function (v) { return !v; }); },
+            style: { all: 'unset', cursor: 'pointer', opacity: .65 },
+            title: full ? '退出全宽' : '铺满面板',
+          }, full ? '⤡' : '⤢'),
+          h('button', {
+            onClick: function () { setNonce(Date.now()); },
+            style: { all: 'unset', cursor: 'pointer', opacity: .65 },
+            title: '刷新工作台',
+          }, '↻'),
+          h('button', {
+            onClick: openExternal,
+            style: { all: 'unset', cursor: 'pointer', opacity: .65 },
+            title: '在浏览器里打开',
+          }, '↗ 新窗口'),
+          h('span', { style: { marginLeft: 'auto', opacity: .5 } }, '服务端改了要重启 DSH 才生效')
+        ),
+        h('iframe', {
+          key: nonce,
+          src: STUDIO_URL + (nonce ? '?r=' + nonce : ''),
+          title: '音乐 MV 工作台',
+          style: {
+            flex: '1 1 auto',
+            width: '100%',
+            border: '0',
+            display: 'block',
+            background: '#f6f7f9',
+          },
+        })
+      );
+    }
+
+    function MvPanelLegacy() {
       ensureStyle();
       const [initial] = React.useState(function () { return loadForm(); });
       const [meta, setMeta] = React.useState(null);

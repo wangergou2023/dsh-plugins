@@ -32,6 +32,7 @@ import { loadRefEditTemplate, buildRefEditGraph, refsForShot, refInstruction, sh
 import { cinematicPass } from './lib/grade.js';
 import { buildBookHtml } from './lib/book.js';
 import { buildBoard } from './lib/board.js';
+import { renderStudio } from './lib/studio.js';
 import { text, llmText, friendlyError } from './lib/llm.js';
 import { planSystemPrompt, planScriptPrompt, shotsPrompt, shotBatches, scenesForBatch } from './lib/prompts.js';
 import { repairBookend, relieveSilence, reviewPlan, comparePlans, comparePlansFair, rewriteShots, addWarmBeat, focusSignShot } from './lib/repairs.js';
@@ -1444,6 +1445,61 @@ export function apply(ctx) {
           sendJson(response, 200, await meta());
         } catch (error) {
           sendJson(response, 500, { error: 'meta_failed', message: String((error && error.message) || error) });
+        }
+      },
+    }));
+
+    /**
+     * 工作台页面：一个自包含网页（见 lib/studio.js）。
+     * 面板那边直接 iframe 这个地址，所以它就是「打开插件看到的东西」。
+     * ?id= 指定任务；不带 id 时给最近一个。
+     */
+    disposers.push(webServer.register({
+      kind: 'exact',
+      path: '/api/comfyui-music-mv/studio',
+      handler: async (request, response) => {
+        if (request.method !== 'GET') { sendJson(response, 405, { error: 'method_not_allowed' }); return; }
+        const url = new URL(request.url || '/', 'http://localhost');
+        const id = String(url.searchParams.get('id') || '');
+        let job = null;
+        let lint = null;
+        let jobs = [];
+        let probe = null;
+        try {
+          await jobStore.refresh();
+          job = (id ? jobStore.get(id) : null) || jobStore.list()[0] || null;
+          jobs = jobStore.list().slice(0, 20);
+          if (job && job.plan) lint = lintPlan(job.plan);
+        } catch (error) {
+          /* 页面照样能开，前端会自己重试 */
+        }
+        try { probe = await meta(); } catch (error) { probe = null; }
+        const html = renderStudio({ job, jobs, meta: probe, lint, error: '' });
+        const buffer = Buffer.from(html, 'utf8');
+        response.writeHead(200, {
+          'content-type': 'text/html; charset=utf-8',
+          'content-length': buffer.length,
+          'cache-control': 'no-store',
+        });
+        response.end(buffer);
+      },
+    }));
+
+    /** 工作台轮询用：单任务的体检结果。 */
+    disposers.push(webServer.register({
+      kind: 'exact',
+      path: '/api/comfyui-music-mv/lint',
+      handler: async (request, response) => {
+        if (request.method !== 'GET') { sendJson(response, 405, { error: 'method_not_allowed' }); return; }
+        const url = new URL(request.url || '/', 'http://localhost');
+        const id = String(url.searchParams.get('id') || '');
+        try {
+          await jobStore.refresh();
+          const job = id ? jobStore.get(id) : jobStore.list()[0];
+          if (!job || !job.plan) { sendJson(response, 404, { error: 'plan_not_found', id }); return; }
+          sendJson(response, 200, lintPlan(job.plan));
+        } catch (error) {
+          sendJson(response, 500, { error: 'lint_failed', message: String((error && error.message) || error) });
         }
       },
     }));
