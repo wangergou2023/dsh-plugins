@@ -78,8 +78,17 @@ export async function listOutputs(limit = 200) {
 
 /** 把 output 里的文件复制进 ComfyUI 的 input，返回 input 里的文件名。 */
 export async function importFromOutput(client, name, subfolder = '') {
-  const safeName = String(name || '').replace(/^.*[\\/]/, '');
+  let raw = String(name || '').trim();
+  let folder = String(subfolder || '');
+  // 面板可能把 "video/x.mp4" 整串发过来（子目录里还有子目录时也一样），这里统一拆开
+  const cut = raw.lastIndexOf('/');
+  if (cut >= 0) {
+    folder = folder ? folder + '/' + raw.slice(0, cut) : raw.slice(0, cut);
+    raw = raw.slice(cut + 1);
+  }
+  const safeName = raw.replace(/^.*[\\/]/, '');
   if (!safeName) throw new Error('没有指定文件名');
+  subfolder = folder;
   for (const root of outputRoots()) {
     const full = path.join(root, String(subfolder || ''), safeName);
     let buffer;
