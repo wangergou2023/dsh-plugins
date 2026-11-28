@@ -546,7 +546,9 @@ async function polish() {
   if (btn) btn.disabled = true;
   $('formNote').textContent = '润化中…';
   try {
-    const data = await MVK.api(BOOT.api + BOOT.polish.path, { method: 'POST', body: { [field]: val } });
+    const extra = {};
+    BOOT.slots.forEach((s) => { const v = slotValue(s); if (v && (!Array.isArray(v) || v.length)) extra[s.key] = v; });
+    const data = await MVK.api(BOOT.api + BOOT.polish.path, { method: 'POST', body: Object.assign({ [field]: val }, extra) });
     const next = data[field] || data.prompt || data.text || '';
     if (!next) throw new Error('润化没有返回内容');
     state.prev = val;
