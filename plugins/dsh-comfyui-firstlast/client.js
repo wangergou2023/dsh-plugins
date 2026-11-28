@@ -38,6 +38,8 @@ window.__ModuleLoader__.load({
       durationSeconds: 5,
       seed: '',
       lightning: true,
+      unet: '',
+      lora: '',
     };
 
     function loadForm() {
@@ -237,6 +239,8 @@ window.__ModuleLoader__.load({
               durationSeconds: Number(cfg.durationSeconds) || 5,
               seed: cfg.seed === '' ? undefined : Number(cfg.seed),
               lightning: !!cfg.lightning,
+              unet: cfg.unet || undefined,
+              lora: cfg.lora || undefined,
             }),
           });
           if (data && data.job) setJob(data.job);
@@ -253,6 +257,36 @@ window.__ModuleLoader__.load({
       const lowVram = alive && typeof alive.vramFreeGB === 'number' && alive.vramFreeGB < 3;
 
       const imageOptions = outputs.filter(function (f) { return f.kind === 'image'; }).slice(0, 80);
+
+      // 模型行：只放 unet，其余 loader 字段保持模板默认（可换模型但不让人误换 CLIP/VAE）
+      const modelRows = (function () {
+        const rows = [];
+        const unet = ((meta && meta.models) || []).filter(function (m) { return m.field === 'unet_name'; })[0];
+        if (unet && unet.options && unet.options.length) {
+          rows.push(h('label', { key: 'unet', style: { ...fieldStyle, maxWidth: '360px' } }, '模型',
+            h('select', {
+              value: cfg.unet || unet.value || '',
+              onChange: function (e) { setCfg(function (prev) { return { ...prev, unet: e.target.value }; }); },
+              style: { ...inputStyle, maxWidth: '360px' },
+            }, unet.options.map(function (opt) { return h('option', { key: opt, value: opt }, opt); }))
+          ));
+        }
+        const loras = (meta && meta.loraOptions) || [];
+        if (loras.length) {
+          rows.push(h('label', { key: 'lora', style: { ...fieldStyle, maxWidth: '380px' } }, 'LoRA',
+            h('select', {
+              value: cfg.lora || '',
+              onChange: function (e) { setCfg(function (prev) { return { ...prev, lora: e.target.value }; }); },
+              style: { ...inputStyle, maxWidth: '380px' },
+            },
+              h('option', { value: '' }, '（跟随闪电加速开关）'),
+              loras.map(function (opt) { return h('option', { key: opt, value: opt }, opt); })
+            )
+          ));
+        }
+        if (!rows.length) return null;
+        return h('div', { style: { display: 'flex', gap: '10px', flexWrap: 'wrap', alignItems: 'flex-end', marginTop: '6px' } }, rows);
+      })();
 
       return h('div', {
         style: {
@@ -272,7 +306,8 @@ window.__ModuleLoader__.load({
           lowVram
             ? h('div', { style: { fontSize: '12px', color: '#d9a441', marginTop: '4px' } },
                 '空闲显存 ' + alive.vramFreeGB + ' GB < 模型所需 ~22 GB：会走内存卸载，一次可能几分钟甚至失败')
-            : null
+            : null,
+          modelRows,
         ),
 
         h(FrameRow, {

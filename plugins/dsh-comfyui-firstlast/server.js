@@ -10,7 +10,7 @@ import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 
 import { ComfyClient } from './lib/comfy.js';
-import { buildPrompt, run as runFirstLast, framesForSeconds } from './lib/firstlast.js';
+import { buildPrompt, run as runFirstLast, framesForSeconds, loadSpec } from './lib/firstlast.js';
 import { scanModels } from './lib/models.js';
 import { listOutputs, importFromOutput } from './lib/outputs.js';
 
@@ -335,12 +335,18 @@ export function apply(ctx) {
         if (request.method !== 'GET') return sendJson(response, 405, { error: 'GET only' });
         const client = new ComfyClient(DEFAULT_HOST);
         const alive = await client.alive();
-        const models = alive ? await scanModels(client).catch(() => []) : [];
+        let models = [];
+        let loraOptions = [];
+        try {
+          const spec = await loadSpec();
+          loraOptions = (spec.slots.knobs.lora && spec.slots.knobs.lora.options) || [];
+          if (alive) models = await scanModels(spec.template, DEFAULT_HOST);
+        } catch { /* 模板读不到就不给模型清单 */ }
         sendJson(response, 200, {
           plugin: 'dsh-comfyui-firstlast',
-          build: 'v2-firstlast',
           alive,
           models,
+          loraOptions,
           limits: { minSeconds: 2, maxSeconds: 15, megapixels: [0.2, 1.0] },
         });
       },
