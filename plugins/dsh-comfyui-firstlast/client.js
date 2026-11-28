@@ -72,13 +72,24 @@ window.__ModuleLoader__.load({
     const inputStyle = { padding: '4px 7px', borderRadius: '6px', border: '1px solid rgba(128,128,128,0.35)', background: 'transparent', color: 'inherit', fontSize: '13px' };
 
     function FrameRow(props) {
-      const { title, required, value, onUpload, onImport, onClear, onZoom, busy } = props;
+      const { title, required, value, onUpload, onPick, onRefresh, onClear, onZoom, busy, options } = props;
+      const list = options || [];
       return h('div', { style: { display: 'flex', flexDirection: 'column', gap: '6px' } },
         h('div', { style: { display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' } },
           h('span', { style: labelStyle }, title),
           h('span', { style: hintStyle }, required ? '必填' : '可选'),
           h('button', { style: btnStyle, onClick: onUpload, disabled: !!busy }, '＋ 上传'),
-          h('button', { style: btnStyle, onClick: onImport, disabled: !!busy }, '从 output 选…'),
+          h('select', {
+            value: '',
+            disabled: !!busy || !list.length,
+            title: list.length ? '从 ComfyUI 的 output 目录里选一张已生成的图' : 'output 目录里还没有图片',
+            onChange: function (e) { if (e.target.value) onPick(e.target.value); },
+            style: { ...inputStyle, fontSize: '11px', maxWidth: '320px' },
+          },
+            h('option', { value: '' }, list.length ? '从 output 选…' : '（output 里没有图片）'),
+            list.map(function (item) { return h('option', { key: item.key, value: item.key }, item.label); })
+          ),
+          h('button', { style: btnStyle, onClick: onRefresh, title: '重新读取 output 目录' }, '↻'),
           value ? h('button', { style: btnStyle, onClick: onClear, title: '清空' }, '↺ 清空') : null
         ),
         value
@@ -113,7 +124,6 @@ window.__ModuleLoader__.load({
       const [polishNote, setPolishNote] = React.useState('');
       const [prevPrompt, setPrevPrompt] = React.useState('');
       const [outputs, setOutputs] = React.useState([]);
-      const [picker, setPicker] = React.useState('');
 
       React.useEffect(function () {
         try {
@@ -130,6 +140,12 @@ window.__ModuleLoader__.load({
           })
           .catch(function () {});
       }, []);
+      const refreshOutputs = React.useCallback(function () {
+        api('/api/comfyui-firstlast/outputs?limit=120').then(function (d) {
+          setOutputs((d && d.files) || []);
+        }).catch(function () {});
+      }, []);
+
       const refreshMeta = React.useCallback(function () {
         api('/api/comfyui-firstlast/meta').then(setMeta).catch(function () { setMeta({ alive: null }); });
         api('/api/comfyui-firstlast/outputs?limit=120').then(function (d) {
@@ -184,7 +200,6 @@ window.__ModuleLoader__.load({
       }
 
       async function importOutput(target, key) {
-        setPicker('');
         if (!key) return;
         const slash = key.indexOf('/');
         const subfolder = slash >= 0 ? key.slice(0, slash) : '';
@@ -262,7 +277,18 @@ window.__ModuleLoader__.load({
       const alive = meta && meta.alive;
       const lowVram = alive && typeof alive.vramFreeGB === 'number' && alive.vramFreeGB < 3;
 
-      const imageOptions = outputs.filter(function (f) { return f.kind === 'image'; }).slice(0, 80);
+      const imageOptions = React.useMemo(function () {
+        const now = Date.now();
+        return outputs
+          .filter(function (f) { return f.kind === 'image'; })
+          .slice(0, 120)
+          .map(function (f) {
+            const mins = Math.max(0, Math.round((now - f.mtime) / 60000));
+            const when = mins < 60 ? mins + ' 分钟前' : Math.round(mins / 60) + ' 小时前';
+            const label = f.subfolder ? f.subfolder + '/' + f.name : f.name;
+            return { key: label, label: label + ' · ' + when };
+          });
+      }, [outputs]);
 
       // 顶部模型排：和「参考生视频」一致，把模板里所有 loader 字段摊成一排下拉
       function renderModelBar() {
@@ -325,55 +351,23 @@ window.__ModuleLoader__.load({
 
         h(FrameRow, {
           title: '首帧', required: true, value: first, busy: busy,
+          options: imageOptions,
           onUpload: function () { uploadTo(setFirst, '首帧'); },
-          onImport: function () { setPicker(picker === 'first' ? '' : 'first'); },
+          onPick: function (key) { importOutput(setFirst, key); },
+          onRefresh: refreshOutputs,
           onClear: function () { setFirst(''); },
           onZoom: function () { setZoom(first); },
         }),
-        picker === 'first'
-          ? h('div', { style: { border: '1px solid rgba(128,128,128,0.25)', borderRadius: '8px', padding: '8px', maxHeight: '210px', overflowY: 'auto' } },
-              imageOptions.length
-                ? h('div', { style: { display: 'flex', flexWrap: 'wrap', gap: '8px' } },
-                    imageOptions.map(function (f) {
-                      const key = f.subfolder ? f.subfolder + '/' + f.name : f.name;
-                      return h('img', {
-                        key: key,
-                        src: '/api/comfyui-firstlast/frames?name=' + encodeURIComponent(f.name),
-                        title: key,
-                        onClick: function () { importOutput(setFirst, key); },
-                        style: { width: '86px', height: '52px', objectFit: 'cover', borderRadius: '5px', cursor: 'pointer', border: '1px solid rgba(128,128,128,0.3)' },
-                      });
-                    })
-                  )
-                : h('div', { style: { fontSize: '12px', opacity: 0.5 } }, 'output 目录里没有图片')
-            )
-          : null,
 
         h(FrameRow, {
           title: '尾帧', required: false, value: last, busy: busy,
+          options: imageOptions,
           onUpload: function () { uploadTo(setLast, '尾帧'); },
-          onImport: function () { setPicker(picker === 'last' ? '' : 'last'); },
+          onPick: function (key) { importOutput(setLast, key); },
+          onRefresh: refreshOutputs,
           onClear: function () { setLast(''); },
           onZoom: function () { setZoom(last); },
         }),
-        picker === 'last'
-          ? h('div', { style: { border: '1px solid rgba(128,128,128,0.25)', borderRadius: '8px', padding: '8px', maxHeight: '210px', overflowY: 'auto' } },
-              imageOptions.length
-                ? h('div', { style: { display: 'flex', flexWrap: 'wrap', gap: '8px' } },
-                    imageOptions.map(function (f) {
-                      const key = f.subfolder ? f.subfolder + '/' + f.name : f.name;
-                      return h('img', {
-                        key: key,
-                        src: '/api/comfyui-firstlast/frames?name=' + encodeURIComponent(f.name),
-                        title: key,
-                        onClick: function () { importOutput(setLast, key); },
-                        style: { width: '86px', height: '52px', objectFit: 'cover', borderRadius: '5px', cursor: 'pointer', border: '1px solid rgba(128,128,128,0.3)' },
-                      });
-                    })
-                  )
-                : h('div', { style: { fontSize: '12px', opacity: 0.5 } }, 'output 目录里没有图片')
-            )
-          : null,
 
         h('div', null,
           h('div', { style: { display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap', marginBottom: '5px' } },
