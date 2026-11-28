@@ -7,6 +7,7 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { applyModelOverrides } from './models.js';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const WORKFLOW_DIR = path.join(HERE, '..', 'workflows');
@@ -87,6 +88,9 @@ export async function buildPrompt(opts = {}) {
     const unet = String(opts.unet);
     prompt[knobs.unet.node].inputs[knobs.unet.input] = unet;
   }
+
+  // 面板顶部那排模型下拉：{ 节点id: { 输入名: 值 } }，直接覆盖模板里的 loader
+  if (opts.models && typeof opts.models === 'object') applyModelOverrides(prompt, opts.models);
 
   return {
     prompt,

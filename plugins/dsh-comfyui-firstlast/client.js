@@ -40,6 +40,7 @@ window.__ModuleLoader__.load({
       lightning: true,
       unet: '',
       lora: '',
+      models: {},
     };
 
     function loadForm() {
@@ -129,13 +130,17 @@ window.__ModuleLoader__.load({
           })
           .catch(function () {});
       }, []);
-
-      React.useEffect(function () {
+      const refreshMeta = React.useCallback(function () {
         api('/api/comfyui-firstlast/meta').then(setMeta).catch(function () { setMeta({ alive: null }); });
-        refreshHistory();
         api('/api/comfyui-firstlast/outputs?limit=120').then(function (d) {
           setOutputs((d && d.files) || []);
         }).catch(function () {});
+      }, []);
+      React.useEffect(function () {
+        refreshMeta();
+
+        refreshHistory();
+
         const timer = setInterval(refreshHistory, 5000);
         return function () { clearInterval(timer); };
       }, [refreshHistory]);
@@ -241,6 +246,7 @@ window.__ModuleLoader__.load({
               lightning: !!cfg.lightning,
               unet: cfg.unet || undefined,
               lora: cfg.lora || undefined,
+              models: cfg.models || {},
             }),
           });
           if (data && data.job) setJob(data.job);
@@ -258,35 +264,37 @@ window.__ModuleLoader__.load({
 
       const imageOptions = outputs.filter(function (f) { return f.kind === 'image'; }).slice(0, 80);
 
-      // 模型行：只放 unet，其余 loader 字段保持模板默认（可换模型但不让人误换 CLIP/VAE）
-      const modelRows = (function () {
-        const rows = [];
-        const unet = ((meta && meta.models) || []).filter(function (m) { return m.field === 'unet_name'; })[0];
-        if (unet && unet.options && unet.options.length) {
-          rows.push(h('label', { key: 'unet', style: { ...fieldStyle, maxWidth: '360px' } }, '模型',
-            h('select', {
-              value: cfg.unet || unet.value || '',
-              onChange: function (e) { setCfg(function (prev) { return { ...prev, unet: e.target.value }; }); },
-              style: { ...inputStyle, maxWidth: '360px' },
-            }, unet.options.map(function (opt) { return h('option', { key: opt, value: opt }, opt); }))
-          ));
-        }
-        const loras = (meta && meta.loraOptions) || [];
-        if (loras.length) {
-          rows.push(h('label', { key: 'lora', style: { ...fieldStyle, maxWidth: '380px' } }, 'LoRA',
-            h('select', {
-              value: cfg.lora || '',
-              onChange: function (e) { setCfg(function (prev) { return { ...prev, lora: e.target.value }; }); },
-              style: { ...inputStyle, maxWidth: '380px' },
+      // 顶部模型排：和「参考生视频」一致，把模板里所有 loader 字段摊成一排下拉
+      function renderModelBar() {
+        const models = (meta && meta.models) || [];
+        if (!models.length) return null;
+        const picked = cfg.models || {};
+        return h('div', { style: { display: 'flex', flexWrap: 'wrap', gap: '10px', alignItems: 'center', fontSize: '12px', marginBottom: '2px' } },
+          h('span', { style: { opacity: 0.6 } }, '模型：'),
+          models.map(function (m) {
+            const current = (picked[m.node] && picked[m.node][m.field]) || m.value || (m.options[0] || '');
+            return h('label', {
+              key: m.node + ':' + m.field,
+              title: m.class_type + ' · 节点 ' + m.node,
+              style: { display: 'flex', alignItems: 'center', gap: '4px' },
             },
-              h('option', { value: '' }, '（跟随闪电加速开关）'),
-              loras.map(function (opt) { return h('option', { key: opt, value: opt }, opt); })
-            )
-          ));
-        }
-        if (!rows.length) return null;
-        return h('div', { style: { display: 'flex', gap: '10px', flexWrap: 'wrap', alignItems: 'flex-end', marginTop: '6px' } }, rows);
-      })();
+              h('span', { style: { opacity: 0.55 } }, m.label),
+              h('select', {
+                value: current,
+                onChange: function (e) {
+                  const value = e.target.value;
+                  setCfg(function (prev) {
+                    const next = { ...prev, models: { ...(prev.models || {}) } };
+                    next.models[m.node] = { ...(next.models[m.node] || {}), [m.field]: value };
+                    return next;
+                  });
+                },
+                style: { ...inputStyle, fontSize: '11px', maxWidth: '230px' },
+              }, m.options.map(function (o) { return h('option', { key: o, value: o }, o); }))
+            );
+          })
+        );
+      }
 
       return h('div', {
         style: {
@@ -294,6 +302,7 @@ window.__ModuleLoader__.load({
           boxSizing: 'border-box', overscrollBehavior: 'contain', display: 'flex', flexDirection: 'column', gap: '12px',
         },
       },
+        renderModelBar(),
         h('div', null,
           h('div', { style: { display: 'flex', alignItems: 'baseline', gap: '10px', flexWrap: 'wrap' } },
             h('div', { style: { fontSize: '17px', fontWeight: 600 } }, '首尾帧视频'),
@@ -301,13 +310,17 @@ window.__ModuleLoader__.load({
               meta == null ? '连接中…'
                 : alive ? 'ComfyUI ' + (alive.version || '') + ' · ' + (alive.device || '') + ' · 空闲 ' + (alive.vramFreeGB || '?') + ' GB'
                 : 'ComfyUI 离线'
-            )
+            ),
+            h('button', {
+              onClick: function () { refreshMeta(); },
+              title: '重新读取 ComfyUI 状态与 output 列表',
+              style: { padding: '2px 8px', fontSize: '11px', borderRadius: '999px', border: '1px solid rgba(128,128,128,0.35)', background: 'transparent', color: 'inherit', cursor: 'pointer' },
+            }, '↻ 重连')
           ),
           lowVram
             ? h('div', { style: { fontSize: '12px', color: '#d9a441', marginTop: '4px' } },
                 '空闲显存 ' + alive.vramFreeGB + ' GB < 模型所需 ~22 GB：会走内存卸载，一次可能几分钟甚至失败')
             : null,
-          modelRows,
         ),
 
         h(FrameRow, {
