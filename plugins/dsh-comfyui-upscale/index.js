@@ -2,6 +2,7 @@
  * dsh-comfyui-upscale —— 独立的「图片放大」插件（SeedVR2 7B int8）。
  */
 import fs from 'node:fs/promises';
+import { renderStudio } from './lib/studio.js';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -235,6 +236,15 @@ export function apply(ctx) {
   ctx.inject(['webServer'], (webCtx) => {
     const webServer = webCtx.get('webServer');
     if (webServer === undefined) return;
+
+    disposers.push(webServer.register({
+      kind: 'exact',
+      path: '/api/comfyui-upscale/studio',
+      handler: async (_request, response) => {
+        response.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' });
+        response.end(renderStudio());
+      },
+    }));
 
     disposers.push(webServer.register({
       kind: 'exact',

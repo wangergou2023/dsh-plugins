@@ -5,6 +5,7 @@
  * 工作流来自用户导入的 `video_minimax_h3_i2v.json`，只补了一个 last_frame 槽位。
  */
 import fs from 'node:fs/promises';
+import { renderStudio } from './lib/studio.js';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
@@ -327,6 +328,15 @@ export function apply(ctx) {
   ctx.inject(['webServer'], (webCtx) => {
     const webServer = webCtx.webServer;
     const base = '/api/comfyui-firstlast';
+
+    disposers.push(webServer.register({
+      kind: 'exact',
+      path: '/api/comfyui-firstlast/studio',
+      handler: async (_request, response) => {
+        response.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' });
+        response.end(renderStudio());
+      },
+    }));
 
     disposers.push(webServer.register({
       kind: 'exact',

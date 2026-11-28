@@ -2,6 +2,7 @@
  * dsh-comfyui-txt2music —— 文生音乐插件（YuE2 3B）。
  */
 import fs from 'node:fs/promises';
+import { renderStudio } from './lib/studio.js';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
@@ -209,6 +210,15 @@ export function apply(ctx) {
     if (webServer === undefined) return;
 
     // ---------- meta ----------
+    disposers.push(webServer.register({
+      kind: 'exact',
+      path: '/api/comfyui-txt2music/studio',
+      handler: async (_request, response) => {
+        response.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' });
+        response.end(renderStudio());
+      },
+    }));
+
     disposers.push(webServer.register({
       kind: 'exact',
       path: '/api/comfyui-txt2music/meta',

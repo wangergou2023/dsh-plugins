@@ -57,6 +57,31 @@ window.__ModuleLoader__.load({
     }
 
     function MusicPanel() {
+      return h('div', {
+        style: { height: '100%', minHeight: 520, display: 'flex', flexDirection: 'column', overflow: 'hidden', background: '#f4f5f7' },
+      },
+        h('div', {
+          style: { display: 'flex', alignItems: 'center', gap: 10, padding: '0 12px', height: 34, flex: 'none', borderBottom: '1px solid #e6e8ec', background: '#fff', fontSize: 12, color: '#5b6169' },
+        },
+          h('b', { style: { fontSize: 12.5, color: '#22262c' } }, "文生音乐 · 工作台"),
+          h('a', { href: "/api/comfyui-txt2music/studio", target: '_blank', rel: 'noreferrer', style: { marginLeft: 'auto', color: '#3f5bd9' } }, '↗ 新窗口打开'),
+          h('button', {
+            onClick: function () {
+              const f = document.querySelector('iframe[data-studio="' + "/api/comfyui-txt2music/studio" + '"]');
+              if (f) f.src = "/api/comfyui-txt2music/studio" + '?t=' + Date.now();
+            },
+            style: { border: '1px solid #dcdfe5', background: '#fff', borderRadius: 7, padding: '3px 9px', fontSize: 12, cursor: 'pointer' },
+          }, '↻ 刷新'),
+        ),
+        h('iframe', {
+          'data-studio': "/api/comfyui-txt2music/studio",
+          src: "/api/comfyui-txt2music/studio",
+          style: { flex: 1, width: '100%', border: '0', minHeight: 480, background: '#f4f5f7' },
+        }),
+      );
+    }
+
+    function MusicPanelLegacy() {
       const [initial] = React.useState(function () { return loadForm(); });
       const [form, setForm] = React.useState(function () {
         return { ...DEFAULTS, ...(initial || {}) };

@@ -12,6 +12,7 @@ import { fileURLToPath } from 'node:url';
 import { ComfyClient } from './lib/comfy.js';
 import { buildPrompt, run as runT2I, saveImages, JobStore, loadSpec, availableLoras, friendlyError } from './lib/t2i.js';
 import { scanModels } from './lib/models.js';
+import { renderStudio } from './lib/studio.js';
 
 const DATA_DIR = process.env.DSH_T2I_DATA || path.join(path.dirname(fileURLToPath(import.meta.url)), '.data');
 const DEFAULT_HOST = 'http://127.0.0.1:8188';
@@ -241,6 +242,42 @@ export function apply(ctx) {
   ctx.inject(['webServer'], (webCtx) => {
     const webServer = webCtx.get('webServer');
     if (webServer === undefined) return;
+
+    disposers.push(webServer.register({
+      kind: 'exact',
+      path: '/api/comfyui-txt2img/studio',
+      handler: async (request, response) => {
+        const url = new URL(request.url, 'http://localhost');
+        const client = new ComfyClient();
+        let probe = null;
+        try {
+          const res = await fetch(client.host + '/system_stats', { signal: AbortSignal.timeout(5000) });
+          if (res.ok) {
+            const data = await res.json();
+            probe = {
+              online: true,
+              version: data.system?.comfyui_version,
+              device: data.devices?.[0]?.name,
+              vramFreeGB: Math.round(((data.devices?.[0]?.vram_free || 0) / 1024 ** 3) * 10) / 10,
+            };
+          } else {
+            probe = { online: false };
+          }
+        } catch {
+          probe = { online: false };
+        }
+        const loras = await availableLoras().catch(() => []);
+        const html = renderStudio({
+          meta: { comfyui: probe, loras },
+          jobId: String(url.searchParams.get('id') || ''),
+        });
+        response.writeHead(200, {
+          'content-type': 'text/html; charset=utf-8',
+          'cache-control': 'no-store',
+        });
+        response.end(html);
+      },
+    }));
 
     disposers.push(webServer.register({
       kind: 'exact',

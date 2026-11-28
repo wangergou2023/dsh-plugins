@@ -2,6 +2,7 @@
  * dsh-comfyui-imgedit —— 独立的「图片编辑」插件（Qwen-Image 2.1）。
  */
 import fs from 'node:fs/promises';
+import { renderStudio } from './lib/studio.js';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
@@ -241,6 +242,15 @@ export function apply(ctx) {
   ctx.inject(['webServer'], (webCtx) => {
     const webServer = webCtx.get('webServer');
     if (webServer === undefined) return;
+
+    disposers.push(webServer.register({
+      kind: 'exact',
+      path: '/api/comfyui-imgedit/studio',
+      handler: async (_request, response) => {
+        response.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' });
+        response.end(renderStudio());
+      },
+    }));
 
     disposers.push(webServer.register({
       kind: 'exact',
