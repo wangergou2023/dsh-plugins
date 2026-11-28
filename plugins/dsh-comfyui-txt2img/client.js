@@ -260,7 +260,23 @@ window.__ModuleLoader__.load({
         },
           h('b', { style: { fontSize: 12.5, color: '#22262c' } }, '文生图 · 工作台'),
           h('span', { style: { color: '#9aa0a8' } }, '提示词 / 参数 / 结果墙都在页面里'),
-          h('a', { href: url, target: '_blank', rel: 'noreferrer', style: { marginLeft: 'auto', color: '#3f5bd9' } }, '↗ 新窗口打开'),
+          h('button', {
+            onClick: function (e) {
+              const abs = location.origin + url;
+              const btn = e.currentTarget;
+              const done = function () {
+                const old = btn.textContent;
+                btn.textContent = '已复制 ✓';
+                setTimeout(function () { btn.textContent = old; }, 1600);
+              };
+              try {
+                if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(abs).then(done, function () { window.prompt('复制这个地址：', abs); });
+                else { window.prompt('复制这个地址：', abs); }
+              } catch (err) { window.prompt('复制这个地址：', abs); }
+            },
+            style: { all: 'unset', cursor: 'pointer', marginLeft: 'auto', color: '#3f5bd9' },
+            title: '在浏览器里打开：' + url,
+          }, '↗ 复制地址'),
           h('button', {
             onClick: function () {
               const f = document.querySelector('iframe[data-t2i-studio]');

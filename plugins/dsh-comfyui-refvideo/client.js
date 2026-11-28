@@ -1,4 +1,23 @@
-window.__ModuleLoader__.load({
+
+/** Electron 里 target=_blank / window.open 会被静默拦掉，改成"复制地址"。 */
+function copyStudioUrl(path, btn) {
+  const url = location.origin + path;
+  const done = function () {
+    if (!btn) { try { window.prompt('复制这个地址，粘到浏览器打开：', url); } catch (e) { /* 忽略 */ } return; }
+    const old = btn.textContent;
+    btn.textContent = '已复制 ✓';
+    setTimeout(function () { btn.textContent = old; }, 1600);
+  };
+  const fallback = function () {
+    try {
+      const ta = document.createElement('textarea');
+      ta.value = url; document.body.appendChild(ta); ta.select();
+      document.execCommand('copy'); document.body.removeChild(ta); done();
+    } catch (e) { window.prompt('复制这个地址，粘到浏览器打开：', url); }
+  };
+  if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(url).then(done, fallback);
+  else fallback();
+}window.__ModuleLoader__.load({
   id: 'dsh-comfyui-refvideo',
   factory(require) {
     const React = require('react');
@@ -74,7 +93,11 @@ window.__ModuleLoader__.load({
           style: { display: 'flex', alignItems: 'center', gap: 10, padding: '0 12px', height: 34, flex: 'none', borderBottom: '1px solid #e6e8ec', background: '#fff', fontSize: 12, color: '#5b6169' },
         },
           h('b', { style: { fontSize: 12.5, color: '#22262c' } }, "参考生视频 · 工作台"),
-          h('a', { href: "/api/comfyui-refvideo/studio", target: '_blank', rel: 'noreferrer', style: { marginLeft: 'auto', color: '#3f5bd9' } }, '↗ 新窗口打开'),
+          h('button', {
+            onClick: function (e) { copyStudioUrl('/api/comfyui-refvideo/studio', e.currentTarget); },
+            style: { all: 'unset', cursor: 'pointer', marginLeft: 'auto', color: '#3f5bd9' },
+            title: '在浏览器里打开：/api/comfyui-refvideo/studio',
+          }, '↗ 复制地址'),
           h('button', {
             onClick: function () {
               const f = document.querySelector('iframe[data-studio="' + "/api/comfyui-refvideo/studio" + '"]');

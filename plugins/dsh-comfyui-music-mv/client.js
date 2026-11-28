@@ -1,4 +1,23 @@
-window.__ModuleLoader__.load({
+
+/** Electron 里 target=_blank / window.open 会被静默拦掉，改成"复制地址"。 */
+function copyStudioUrl(path, btn) {
+  const url = location.origin + path;
+  const done = function () {
+    if (!btn) { try { window.prompt('复制这个地址，粘到浏览器打开：', url); } catch (e) { /* 忽略 */ } return; }
+    const old = btn.textContent;
+    btn.textContent = '已复制 ✓';
+    setTimeout(function () { btn.textContent = old; }, 1600);
+  };
+  const fallback = function () {
+    try {
+      const ta = document.createElement('textarea');
+      ta.value = url; document.body.appendChild(ta); ta.select();
+      document.execCommand('copy'); document.body.removeChild(ta); done();
+    } catch (e) { window.prompt('复制这个地址，粘到浏览器打开：', url); }
+  };
+  if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(url).then(done, fallback);
+  else fallback();
+}window.__ModuleLoader__.load({
   id: 'dsh-comfyui-music-mv',
   factory(require) {
     const React = require('react');
@@ -270,8 +289,8 @@ const STEPS = [
       const [full, setFull] = React.useState(false);
       const [nonce, setNonce] = React.useState(0);
 
-      const openExternal = React.useCallback(function () {
-        try { window.open(STUDIO_URL + (nonce ? '?r=' + nonce : ''), '_blank', 'noopener'); } catch { /* 忽略 */ }
+      const openExternal = React.useCallback(function (e) {
+        copyStudioUrl(STUDIO_URL + (nonce ? '?r=' + nonce : ''), e && e.currentTarget);
       }, [nonce]);
 
       return h('div', {
@@ -313,7 +332,7 @@ const STEPS = [
             onClick: openExternal,
             style: { all: 'unset', cursor: 'pointer', opacity: .65 },
             title: '在浏览器里打开',
-          }, '↗ 新窗口'),
+          }, '↗ 复制地址'),
           h('span', { style: { marginLeft: 'auto', opacity: .5 } }, '服务端改了要重启 DSH 才生效')
         ),
         h('iframe', {
