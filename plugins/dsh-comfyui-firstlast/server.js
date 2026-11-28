@@ -5,7 +5,7 @@
  * 工作流来自用户导入的 `video_minimax_h3_i2v.json`，只补了一个 last_frame 槽位。
  */
 import fs from 'node:fs/promises';
-import { renderStudio } from './lib/studio.js';
+import { renderStudio } from './lib/studio-page.js';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';

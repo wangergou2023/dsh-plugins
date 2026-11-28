@@ -5,10 +5,7 @@
   "type": "module",
   "description": "Generate a short video between a first frame and a last frame with MiniMax H3 i2v.",
   "exports": {
-    ".": "./server.js",
-    "./client": "./client.js",
-    "./icon": "./icon.svg",
-    "./locale/*.json": "./locale/*.json"
+    ".": "./server2.js"
   },
   "files": [
     "index.js",
@@ -19,7 +16,8 @@
     "cordis.patch.yml",
     "icon.svg",
     "locale/*.json",
-    "README.md"
+    "README.md",
+    "server2.js"
   ],
   "keywords": [
     "dsh-plugin",
