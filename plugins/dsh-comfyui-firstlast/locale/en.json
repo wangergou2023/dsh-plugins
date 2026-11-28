@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "First & Last Frame",
+    "description": "Give a first frame and a last frame, MiniMax H3 fills in the motion; the panel takes two images, aspect, duration and plays the result."
+  }
+}
