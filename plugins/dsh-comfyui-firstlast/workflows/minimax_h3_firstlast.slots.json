@@ -1,0 +1,52 @@
+{
+  "target": "105:104",
+  "model": "MiniMaxH3ImageToVideo",
+  "knobs": {
+    "aspectRatio": {
+      "node": "115",
+      "input": "aspect_ratio",
+      "default": "16:9 (Widescreen)",
+      "options": [
+        "1:1 (Square)",
+        "2:3 (Portrait Photo)",
+        "3:2 (Photo)",
+        "3:4 (Portrait Standard)",
+        "4:3 (Standard)",
+        "9:16 (Portrait Widescreen)",
+        "16:9 (Widescreen)",
+        "21:9 (Ultrawide)"
+      ]
+    },
+    "megapixels": { "node": "115", "input": "megapixels", "default": 0.4, "min": 0.2, "max": 1.0 },
+    "inputMegapixels": { "node": "119", "input": "megapixels", "default": 0.9, "min": 0.4, "max": 2.0 },
+    "durationSeconds": { "node": "105:111", "input": "value", "default": 5, "min": 2, "max": 15 },
+    "seed": { "node": "105:15", "input": "noise_seed" },
+    "lightning": { "node": "105:126", "input": "value", "default": true },
+    "stepsFast": { "node": "105:125", "input": "value", "default": 4 },
+    "stepsFull": { "node": "105:124", "input": "value", "default": 20 },
+    "lora": {
+      "node": "105:121",
+      "input": "lora_name",
+      "default": "minimax_h3_dmad_full_dareties_v4_step600_comfy_fro.safetensors",
+      "options": [
+        "minimax_h3_dmad_full_dareties_v4_step600_comfy_fro.safetensors",
+        "minimax_h3_ref2v_turbo_4step_v0.1_comfyui_bf16.safetensors",
+        "minimax_h3_ref2v_turbo_8step_v1.0_768p_comfyui_bf16.safetensors"
+      ]
+    },
+    "unet": {
+      "node": "105:6",
+      "input": "unet_name",
+      "default": "minimax_h3_hybrid_fl2va_ref2va_b25-49-int8.safetensors"
+    }
+  },
+  "frames": {
+    "node": "105:107",
+    "expression": "max(5, round(seconds * 24)) + (5 - (max(5, round(seconds * 24)) % 17)) % 17",
+    "note": "H3 要求 17n+5 帧；这个表达式就是对齐到最近的那个合法帧数"
+  },
+  "slots": {
+    "firstFrame": { "loadNode": "114", "input": "image", "target": "first_frame" },
+    "lastFrame": { "loadNode": "116", "input": "image", "target": "last_frame" }
+  }
+}

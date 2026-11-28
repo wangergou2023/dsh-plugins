@@ -1,0 +1,5 @@
+# Bundle patch layer for dsh-comfyui-firstlast
+- insert:
+    - id: comfyui-firstlast
+      name: 'dsh-comfyui-firstlast'
+      config: {}
