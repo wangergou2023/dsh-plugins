@@ -5,13 +5,14 @@
   "type": "module",
   "description": "Generate a short video between a first frame and a last frame with MiniMax H3 i2v.",
   "exports": {
-    ".": "./index.js",
+    ".": "./server.js",
     "./client": "./client.js",
     "./icon": "./icon.svg",
     "./locale/*.json": "./locale/*.json"
   },
   "files": [
     "index.js",
+    "server.js",
     "client.js",
     "lib",
     "workflows",

@@ -20,14 +20,14 @@ window.__ModuleLoader__.load({
     }
 
     const ASPECTS = [
-      ['16:9 (Widescreen)', '16:9 横屏'],
-      ['9:16 (Portrait Widescreen)', '9:16 竖屏'],
-      ['1:1 (Square)', '1:1 方形'],
+      ['16:9 (Widescreen)', '16:9'],
+      ['9:16 (Portrait Widescreen)', '9:16'],
+      ['1:1 (Square)', '1:1'],
       ['4:3 (Standard)', '4:3'],
       ['3:4 (Portrait Standard)', '3:4'],
-      ['21:9 (Ultrawide)', '21:9 宽银幕'],
-      ['3:2 (Photo)', '3:2 照片'],
-      ['2:3 (Portrait Photo)', '2:3 竖照片'],
+      ['21:9 (Ultrawide)', '21:9'],
+      ['3:2 (Photo)', '3:2'],
+      ['2:3 (Portrait Photo)', '2:3'],
     ];
 
     const FORM_KEY = 'comfyui-firstlast.form.v1';
@@ -55,36 +55,42 @@ window.__ModuleLoader__.load({
       const size = props && typeof props.size === 'number' ? props.size : 20;
       const active = !!(props && props.active);
       const stroke = { fill: 'none', stroke: 'currentColor', strokeWidth: active ? 1.9 : 1.6, strokeLinecap: 'round', strokeLinejoin: 'round' };
-      return h('svg', { width: size, height: size, viewBox: '0 0 24 24', 'aria-hidden': true }, [
-        h('rect', { key: 'a', x: 2.2, y: 5.2, width: 6.4, height: 13.6, rx: 1.6, ...stroke }),
-        h('rect', { key: 'b', x: 15.4, y: 5.2, width: 6.4, height: 13.6, rx: 1.6, ...stroke }),
-        h('path', { key: 'c', d: 'M9.4 12h5.2M12.9 9.8l2.2 2.2-2.2 2.2', ...stroke }),
-      ]);
+      return h('svg', { width: size, height: size, viewBox: '0 0 24 24', 'aria-hidden': true },
+        h('rect', { x: 2.2, y: 5.2, width: 6.4, height: 13.6, rx: 1.6, ...stroke }),
+        h('rect', { x: 15.4, y: 5.2, width: 6.4, height: 13.6, rx: 1.6, ...stroke }),
+        h('path', { d: 'M9.4 12h5.2M12.9 9.8l2.2 2.2-2.2 2.2', ...stroke })
+      );
     }
 
-    function FrameSlot(props) {
-      const { title, hint, value, onPick, onClear, onPreview } = props;
+    const labelStyle = { fontSize: '13px', fontWeight: 600, color: 'inherit' };
+    const hintStyle = { fontSize: '12px', opacity: 0.55, marginLeft: '6px' };
+    const btnStyle = { all: 'unset', cursor: 'pointer', fontSize: '12px', padding: '3px 9px', border: '1px solid rgba(128,128,128,0.35)', borderRadius: '6px', display: 'inline-flex', alignItems: 'center', gap: '4px' };
+    const fieldStyle = { display: 'flex', flexDirection: 'column', gap: '3px', fontSize: '12px', opacity: 0.85 };
+    const inputStyle = { padding: '4px 7px', borderRadius: '6px', border: '1px solid rgba(128,128,128,0.35)', background: 'transparent', color: 'inherit', fontSize: '13px' };
+
+    function FrameRow(props) {
+      const { title, required, value, onUpload, onImport, onClear, onZoom, busy } = props;
       return h('div', { style: { display: 'flex', flexDirection: 'column', gap: '6px' } },
-        h('div', { style: { fontSize: '12px', opacity: 0.75 } }, title),
+        h('div', { style: { display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' } },
+          h('span', { style: labelStyle }, title),
+          h('span', { style: hintStyle }, required ? '必填' : '可选'),
+          h('button', { style: btnStyle, onClick: onUpload, disabled: !!busy }, '＋ 上传'),
+          h('button', { style: btnStyle, onClick: onImport, disabled: !!busy }, '从 output 选…'),
+          value ? h('button', { style: btnStyle, onClick: onClear, title: '清空' }, '↺ 清空') : null
+        ),
         value
-          ? h('div', { style: { position: 'relative', width: '190px' } },
-              h('img', {
-                src: '/api/comfyui-firstlast/frames?name=' + encodeURIComponent(value),
-                alt: title,
-                onClick: onPreview,
-                style: { width: '190px', height: '108px', objectFit: 'cover', borderRadius: '8px', border: '1px solid rgba(128,128,128,0.3)', cursor: 'zoom-in', display: 'block' },
-              }),
-              h('button', {
-                onClick: onClear,
-                title: '移除',
-                style: { all: 'unset', position: 'absolute', top: '4px', right: '6px', cursor: 'pointer', background: 'rgba(0,0,0,0.55)', color: '#fff', borderRadius: '50%', width: '18px', height: '18px', fontSize: '12px', textAlign: 'center', lineHeight: '18px' },
-              }, '×'),
-              h('div', { style: { fontSize: '11px', opacity: 0.55, marginTop: '3px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } }, value)
+          ? h('div', { style: { display: 'flex', gap: '8px', flexWrap: 'wrap' } },
+              h('div', { style: { position: 'relative' } },
+                h('img', {
+                  src: '/api/comfyui-firstlast/frames?name=' + encodeURIComponent(value),
+                  alt: title,
+                  onClick: onZoom,
+                  style: { width: '184px', height: '104px', objectFit: 'cover', borderRadius: '7px', border: '1px solid rgba(128,128,128,0.3)', cursor: 'zoom-in', display: 'block' },
+                })
+              ),
+              h('div', { style: { fontSize: '11px', opacity: 0.5, maxWidth: '260px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', paddingTop: '4px' } }, value)
             )
-          : h('button', {
-              onClick: onPick,
-              style: { width: '190px', height: '108px', borderRadius: '8px', border: '1px dashed rgba(128,128,128,0.45)', background: 'transparent', color: 'inherit', cursor: 'pointer', fontSize: '12px', opacity: 0.85 },
-            }, hint)
+          : h('div', { style: { fontSize: '12px', opacity: 0.4, padding: '10px 0 2px' } }, required ? '还没有首帧——没有起点，模型不知道从哪里开始动' : '不给尾帧也行：模型只从首帧往后推')
       );
     }
 
@@ -100,6 +106,11 @@ window.__ModuleLoader__.load({
       const [error, setError] = React.useState('');
       const [history, setHistory] = React.useState([]);
       const [zoom, setZoom] = React.useState('');
+      const [polishing, setPolishing] = React.useState(false);
+      const [polishNote, setPolishNote] = React.useState('');
+      const [prevPrompt, setPrevPrompt] = React.useState('');
+      const [outputs, setOutputs] = React.useState([]);
+      const [picker, setPicker] = React.useState('');
 
       React.useEffect(function () {
         try {
@@ -120,6 +131,9 @@ window.__ModuleLoader__.load({
       React.useEffect(function () {
         api('/api/comfyui-firstlast/meta').then(setMeta).catch(function () { setMeta({ alive: null }); });
         refreshHistory();
+        api('/api/comfyui-firstlast/outputs?limit=120').then(function (d) {
+          setOutputs((d && d.files) || []);
+        }).catch(function () {});
         const timer = setInterval(refreshHistory, 5000);
         return function () { clearInterval(timer); };
       }, [refreshHistory]);
@@ -140,7 +154,7 @@ window.__ModuleLoader__.load({
         return function () { clearInterval(timer); };
       }, [job, refreshHistory]);
 
-      function pick(setter, label) {
+      function uploadTo(setter, label) {
         const input = document.createElement('input');
         input.type = 'file';
         input.accept = 'image/*';
@@ -160,6 +174,49 @@ window.__ModuleLoader__.load({
           }
         };
         input.click();
+      }
+
+      async function importOutput(target, key) {
+        setPicker('');
+        if (!key) return;
+        const slash = key.indexOf('/');
+        const subfolder = slash >= 0 ? key.slice(0, slash) : '';
+        const name = slash >= 0 ? key.slice(slash + 1) : key;
+        setError('');
+        setBusy('正在导入…');
+        try {
+          const data = await api('/api/comfyui-firstlast/import', {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ name, subfolder }),
+          });
+          target(data.name);
+        } catch (err) {
+          setError(String((err && err.message) || err));
+        } finally {
+          setBusy('');
+        }
+      }
+
+      async function polish() {
+        if (!prompt.trim()) { setError('先写一句，再润化'); return; }
+        setError('');
+        setPolishNote('');
+        setPolishing(true);
+        try {
+          const data = await api('/api/comfyui-firstlast/polish', {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ prompt: prompt.trim(), first, last, counts: { first: first ? 1 : 0, last: last ? 1 : 0 } }),
+          });
+          setPrevPrompt(prompt);
+          setPrompt(data.prompt);
+          setPolishNote('已润化，可点「↩ 撤销润化」还原');
+        } catch (err) {
+          setError(String((err && err.message) || err));
+        } finally {
+          setPolishing(false);
+        }
       }
 
       async function generate() {
@@ -192,83 +249,131 @@ window.__ModuleLoader__.load({
       const running = !!(job && (job.status === 'queued' || job.status === 'running'));
       const done = !!(job && job.status === 'done');
       const active = running || busy !== '';
-      const online = meta && meta.alive;
+      const alive = meta && meta.alive;
+      const lowVram = alive && typeof alive.vramFreeGB === 'number' && alive.vramFreeGB < 3;
+
+      const imageOptions = outputs.filter(function (f) { return f.kind === 'image'; }).slice(0, 80);
 
       return h('div', {
         style: {
-          padding: '18px 20px', maxWidth: '1080px', height: '100%', overflowY: 'auto', overflowX: 'hidden',
-          boxSizing: 'border-box', overscrollBehavior: 'contain', display: 'flex', flexDirection: 'column', gap: '14px',
+          padding: '16px 20px', maxWidth: '1120px', height: '100%', overflowY: 'auto', overflowX: 'hidden',
+          boxSizing: 'border-box', overscrollBehavior: 'contain', display: 'flex', flexDirection: 'column', gap: '12px',
         },
       },
         h('div', null,
           h('div', { style: { display: 'flex', alignItems: 'baseline', gap: '10px', flexWrap: 'wrap' } },
-            h('div', { style: { fontSize: '19px', fontWeight: 600 } }, '首尾帧生视频'),
-            h('div', { style: { fontSize: '12px', opacity: 0.6 } },
+            h('div', { style: { fontSize: '17px', fontWeight: 600 } }, '首尾帧视频'),
+            h('div', { style: { fontSize: '12px', opacity: 0.55 } },
               meta == null ? '连接中…'
-                : online ? 'ComfyUI ' + (online.version || '') + ' · 空闲 ' + (online.vramFreeGB || '?') + ' GB'
-                : 'ComfyUI 离线')
+                : alive ? 'ComfyUI ' + (alive.version || '') + ' · ' + (alive.device || '') + ' · 空闲 ' + (alive.vramFreeGB || '?') + ' GB'
+                : 'ComfyUI 离线'
+            )
           ),
-          h('div', { style: { fontSize: '12px', opacity: 0.6, marginTop: '4px' } },
-            '给起点和终点两张图，描述中间发生了什么，模型补出过程；只给首帧也能跑')
+          lowVram
+            ? h('div', { style: { fontSize: '12px', color: '#d9a441', marginTop: '4px' } },
+                '空闲显存 ' + alive.vramFreeGB + ' GB < 模型所需 ~22 GB：会走内存卸载，一次可能几分钟甚至失败')
+            : null
         ),
 
-        h('div', { style: { display: 'flex', gap: '18px', flexWrap: 'wrap' } },
-          h(FrameSlot, {
-            title: '首帧（必填）', hint: '点击上传首帧', value: first,
-            onPick: function () { pick(setFirst, '首帧'); },
-            onClear: function () { setFirst(''); },
-            onPreview: function () { setZoom(first); },
-          }),
-          h(FrameSlot, {
-            title: '尾帧（可选）', hint: '点击上传尾帧', value: last,
-            onPick: function () { pick(setLast, '尾帧'); },
-            onClear: function () { setLast(''); },
-            onPreview: function () { setZoom(last); },
+        h(FrameRow, {
+          title: '首帧', required: true, value: first, busy: busy,
+          onUpload: function () { uploadTo(setFirst, '首帧'); },
+          onImport: function () { setPicker(picker === 'first' ? '' : 'first'); },
+          onClear: function () { setFirst(''); },
+          onZoom: function () { setZoom(first); },
+        }),
+        picker === 'first'
+          ? h('div', { style: { border: '1px solid rgba(128,128,128,0.25)', borderRadius: '8px', padding: '8px', maxHeight: '210px', overflowY: 'auto' } },
+              imageOptions.length
+                ? h('div', { style: { display: 'flex', flexWrap: 'wrap', gap: '8px' } },
+                    imageOptions.map(function (f) {
+                      const key = f.subfolder ? f.subfolder + '/' + f.name : f.name;
+                      return h('img', {
+                        key: key,
+                        src: '/api/comfyui-firstlast/frames?name=' + encodeURIComponent(f.name),
+                        title: key,
+                        onClick: function () { importOutput(setFirst, key); },
+                        style: { width: '86px', height: '52px', objectFit: 'cover', borderRadius: '5px', cursor: 'pointer', border: '1px solid rgba(128,128,128,0.3)' },
+                      });
+                    })
+                  )
+                : h('div', { style: { fontSize: '12px', opacity: 0.5 } }, 'output 目录里没有图片')
+            )
+          : null,
+
+        h(FrameRow, {
+          title: '尾帧', required: false, value: last, busy: busy,
+          onUpload: function () { uploadTo(setLast, '尾帧'); },
+          onImport: function () { setPicker(picker === 'last' ? '' : 'last'); },
+          onClear: function () { setLast(''); },
+          onZoom: function () { setZoom(last); },
+        }),
+        picker === 'last'
+          ? h('div', { style: { border: '1px solid rgba(128,128,128,0.25)', borderRadius: '8px', padding: '8px', maxHeight: '210px', overflowY: 'auto' } },
+              imageOptions.length
+                ? h('div', { style: { display: 'flex', flexWrap: 'wrap', gap: '8px' } },
+                    imageOptions.map(function (f) {
+                      const key = f.subfolder ? f.subfolder + '/' + f.name : f.name;
+                      return h('img', {
+                        key: key,
+                        src: '/api/comfyui-firstlast/frames?name=' + encodeURIComponent(f.name),
+                        title: key,
+                        onClick: function () { importOutput(setLast, key); },
+                        style: { width: '86px', height: '52px', objectFit: 'cover', borderRadius: '5px', cursor: 'pointer', border: '1px solid rgba(128,128,128,0.3)' },
+                      });
+                    })
+                  )
+                : h('div', { style: { fontSize: '12px', opacity: 0.5 } }, 'output 目录里没有图片')
+            )
+          : null,
+
+        h('div', null,
+          h('div', { style: { display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap', marginBottom: '5px' } },
+            h('span', { style: labelStyle }, '提示词'),
+            h('span', { style: hintStyle }, '写中间发生了什么：动作、镜头、光线变化'),
+            h('button', { style: btnStyle, onClick: polish, disabled: polishing || active }, polishing ? '润化中…' : '✨ AI 润化'),
+            prevPrompt ? h('button', { style: btnStyle, onClick: function () { setPrompt(prevPrompt); setPrevPrompt(''); setPolishNote(''); } }, '↩ 撤销润化') : null,
+            polishNote ? h('span', { style: { fontSize: '12px', color: '#5a9e6f' } }, polishNote) : null
+          ),
+          h('textarea', {
+            value: prompt,
+            onChange: function (e) { setPrompt(e.target.value); },
+            rows: 4,
+            placeholder: '例：店员从柜台后走到门口，手扶上玻璃门，门外的雨声变大；镜头缓慢推近，最后停在门口那张机位上',
+            style: { width: '100%', boxSizing: 'border-box', padding: '8px 10px', borderRadius: '8px', border: '1px solid rgba(128,128,128,0.35)', background: 'transparent', color: 'inherit', fontSize: '13px', resize: 'vertical', lineHeight: 1.6 },
           })
         ),
 
-        h('textarea', {
-          value: prompt,
-          onChange: function (e) { setPrompt(e.target.value); },
-          rows: 3,
-          placeholder: '例：他把伞收拢，抬手抹掉玻璃上的水汽；雨渐小，门外的女孩抬起头看过来',
-          style: { width: '100%', boxSizing: 'border-box', padding: '10px 12px', borderRadius: '8px', border: '1px solid rgba(128,128,128,0.3)', background: 'transparent', color: 'inherit', fontSize: '13px', resize: 'vertical', lineHeight: 1.6 },
-        }),
-
-        h('div', { style: { display: 'flex', gap: '14px', alignItems: 'flex-end', flexWrap: 'wrap' } },
-          h('label', { style: { fontSize: '12px', display: 'flex', flexDirection: 'column', gap: '4px' } },
-            '比例',
+        h('div', { style: { display: 'flex', gap: '12px', alignItems: 'flex-end', flexWrap: 'wrap' } },
+          h('label', { style: fieldStyle }, '比例',
             h('select', {
               value: cfg.aspectRatio,
               onChange: function (e) { setCfg(function (p) { return { ...p, aspectRatio: e.target.value }; }); },
-              style: { padding: '5px 8px', borderRadius: '6px', border: '1px solid rgba(128,128,128,0.3)', background: 'transparent', color: 'inherit' },
+              style: inputStyle,
             }, ASPECTS.map(function (a) { return h('option', { key: a[0], value: a[0] }, a[1]); }))
           ),
-          h('label', { style: { fontSize: '12px', display: 'flex', flexDirection: 'column', gap: '4px' } },
-            '像素(MP)',
+          h('label', { style: fieldStyle }, '像素(MP)',
             h('input', {
               type: 'number', min: 0.2, max: 1, step: 0.1, value: cfg.megapixels,
               onChange: function (e) { setCfg(function (p) { return { ...p, megapixels: e.target.value }; }); },
-              style: { width: '80px', padding: '5px 8px', borderRadius: '6px', border: '1px solid rgba(128,128,128,0.3)', background: 'transparent', color: 'inherit' },
+              style: { ...inputStyle, width: '76px' },
             })
           ),
-          h('label', { style: { fontSize: '12px', display: 'flex', flexDirection: 'column', gap: '4px' } },
-            '时长(秒)',
+          h('label', { style: fieldStyle }, '时长(秒)',
             h('input', {
               type: 'number', min: 2, max: 15, step: 1, value: cfg.durationSeconds,
               onChange: function (e) { setCfg(function (p) { return { ...p, durationSeconds: e.target.value }; }); },
-              style: { width: '80px', padding: '5px 8px', borderRadius: '6px', border: '1px solid rgba(128,128,128,0.3)', background: 'transparent', color: 'inherit' },
+              style: { ...inputStyle, width: '76px' },
             })
           ),
-          h('label', { style: { fontSize: '12px', display: 'flex', flexDirection: 'column', gap: '4px' } },
-            '种子',
+          h('label', { style: fieldStyle }, '种子',
             h('input', {
               type: 'text', value: cfg.seed, placeholder: '随机',
               onChange: function (e) { setCfg(function (p) { return { ...p, seed: e.target.value }; }); },
-              style: { width: '96px', padding: '5px 8px', borderRadius: '6px', border: '1px solid rgba(128,128,128,0.3)', background: 'transparent', color: 'inherit' },
+              style: { ...inputStyle, width: '110px' },
             })
           ),
-          h('label', { style: { fontSize: '12px', display: 'flex', alignItems: 'center', gap: '6px', paddingBottom: '5px' } },
+          h('label', { style: { ...fieldStyle, flexDirection: 'row', alignItems: 'center', gap: '5px', paddingBottom: '4px' } },
             h('input', {
               type: 'checkbox', checked: cfg.lightning,
               onChange: function (e) { setCfg(function (p) { return { ...p, lightning: e.target.checked }; }); },
@@ -278,26 +383,24 @@ window.__ModuleLoader__.load({
           h('button', {
             onClick: generate,
             disabled: active,
-            style: { padding: '7px 18px', borderRadius: '7px', border: '1px solid rgba(128,128,128,0.35)', background: active ? 'transparent' : 'rgba(120,140,255,0.16)', color: 'inherit', cursor: active ? 'default' : 'pointer', fontWeight: 600, fontSize: '13px' },
+            style: { padding: '6px 20px', borderRadius: '7px', border: '1px solid rgba(128,128,128,0.35)', background: active ? 'transparent' : 'rgba(120,140,255,0.18)', color: 'inherit', cursor: active ? 'default' : 'pointer', fontWeight: 600, fontSize: '13px' },
           }, active ? '生成中…' : '生成')
         ),
 
-        error ? h('div', { style: { color: '#e05c5c', fontSize: '13px' } }, error) : null,
-        busy ? h('div', { style: { opacity: 0.7, fontSize: '12px' } }, busy) : null,
+        error ? h('div', { style: { color: '#e05c5c', fontSize: '12px' } }, error) : null,
+        busy ? h('div', { style: { opacity: 0.65, fontSize: '12px' } }, busy) : null,
 
         job
-          ? h('div', { style: { padding: '10px 12px', border: '1px solid rgba(128,128,128,0.25)', borderRadius: '8px' } },
-              h('div', { style: { fontSize: '12px', opacity: 0.75, marginBottom: '6px' } },
+          ? h('div', { style: { padding: '9px 11px', border: '1px solid rgba(128,128,128,0.25)', borderRadius: '8px' } },
+              h('div', { style: { fontSize: '12px', opacity: 0.7, marginBottom: '5px' } },
                 job.id + ' · ' + job.status
                   + (job.elapsedSeconds ? ' · ' + job.elapsedSeconds + 's' : '')
+                  + (job.summary && job.summary.seed !== undefined ? ' · 种子 ' + job.summary.seed : '')
                   + (job.summary && job.summary.frames ? ' · ' + job.summary.frames + ' 帧' : '')
-                  + (job.summary && job.summary.durationSeconds ? ' / ' + job.summary.durationSeconds + 's' : '')
               ),
-              job.warning ? h('div', { style: { fontSize: '12px', color: '#d9a441', marginBottom: '6px' } }, job.warning) : null,
+              job.warning ? h('div', { style: { fontSize: '12px', color: '#d9a441', marginBottom: '5px' } }, job.warning) : null,
               job.error ? h('div', { style: { fontSize: '12px', color: '#e05c5c' } }, job.error) : null,
-              done
-                ? h('video', { src: '/api/comfyui-firstlast/media?id=' + encodeURIComponent(job.id), controls: true, style: { width: '100%', maxWidth: '720px', borderRadius: '6px' } })
-                : null
+              done ? h('video', { src: '/api/comfyui-firstlast/media?id=' + encodeURIComponent(job.id), controls: true, style: { width: '100%', maxWidth: '680px', borderRadius: '6px' } }) : null
             )
           : null,
 
@@ -305,17 +408,13 @@ window.__ModuleLoader__.load({
           ? h('div', null,
               h('div', { style: { fontSize: '13px', fontWeight: 600, marginBottom: '6px' } }, '最近生成'),
               history.slice(0, 10).map(function (item) {
-                return h('div', { key: item.id, style: { display: 'flex', gap: '8px', alignItems: 'center', fontSize: '12px', padding: '3px 0' } },
-                  h('span', { style: { opacity: 0.6 } }, new Date(item.createdAt).toLocaleString()),
+                return h('div', { key: item.id, style: { display: 'flex', gap: '8px', alignItems: 'center', fontSize: '12px', padding: '2px 0' } },
+                  h('span', { style: { opacity: 0.55 } }, new Date(item.createdAt).toLocaleString()),
                   h('span', null, item.status),
                   item.status === 'done'
                     ? h('a', { href: '/api/comfyui-firstlast/media?id=' + encodeURIComponent(item.id), target: '_blank', rel: 'noreferrer', style: { color: 'inherit' } }, '打开')
-                    : h('span', { style: { opacity: 0.5 } }, item.error || ''),
-                  h('button', {
-                    onClick: function () { setJob(item); },
-                    style: { all: 'unset', cursor: 'pointer', opacity: 0.6 },
-                    title: '查看',
-                  }, '↗')
+                    : h('span', { style: { opacity: 0.45 } }, item.error || ''),
+                  h('button', { style: { all: 'unset', cursor: 'pointer', opacity: 0.55 }, title: '查看', onClick: function () { setJob(item); } }, '↗')
                 );
               })
             )
@@ -324,7 +423,7 @@ window.__ModuleLoader__.load({
         zoom
           ? h('div', {
               onClick: function () { setZoom(''); },
-              style: { position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.8)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 60, cursor: 'zoom-out' },
+              style: { position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.82)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 60, cursor: 'zoom-out' },
             }, h('img', { src: '/api/comfyui-firstlast/frames?name=' + encodeURIComponent(zoom), alt: '预览', style: { maxWidth: '92vw', maxHeight: '92vh', borderRadius: '8px' } }))
           : null
       );
@@ -336,7 +435,7 @@ window.__ModuleLoader__.load({
         ctx.slots.inject('sidebar.panellist', () => ctx.slots.register({
           name: 'sidebar.panellist',
           id: 'comfyui-firstlast',
-          order: 5,
+          order: 4,
           label: () => '首尾帧视频',
         }, FirstLastIcon));
 
